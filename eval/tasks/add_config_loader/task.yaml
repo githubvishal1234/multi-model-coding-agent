@@ -1,0 +1,15 @@
+id: add_config_loader
+class: boilerplate
+instruction: |-
+  Create config.py with a dataclass Config and a function load_config(env=None) that
+  builds it from environment variables. When env is None, read os.environ.
+    host: APP_HOST, default "127.0.0.1"
+    port: APP_PORT, int, default 8000; raise ValueError unless it is a whole number from 1 to 65535
+    debug: APP_DEBUG, bool, default False; "1", "true" and "yes" (any case) mean True, anything else False
+    allowed_hosts: APP_ALLOWED_HOSTS, comma-separated list with whitespace stripped and empty
+      entries dropped; default []
+  Do not change main.py.
+check:
+  command: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+  files: check
+solution: solution

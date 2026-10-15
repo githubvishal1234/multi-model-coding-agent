@@ -1,0 +1,10 @@
+id: test_stack
+class: tests
+instruction: >-
+  Write pytest tests for the Stack class in stack.py in a new file test_stack.py. Cover
+  push and pop order, peek, is_empty, len, and the IndexError raised when popping or
+  peeking an empty stack.
+check:
+  command: ["{python}", "check_tests.py"]
+  files: check
+solution: solution
