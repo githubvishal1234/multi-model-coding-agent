@@ -83,26 +83,67 @@ def test_search_bad_regex_and_no_matches(settings, repo):
     assert call(ctx, "search_repo", pattern="zzz").output == "no matches"
 
 
-# --- create_file (F3) ---
+# --- write_file (F3) ---
 
-def test_create_denied_leaves_nothing(settings, ws):
+def test_write_new_file_denied_leaves_nothing(settings, ws):
     ctx, approver = make_ctx(settings, [False])
-    r = call(ctx, "create_file", path="new/a.py", content="print(1)\n")
+    r = call(ctx, "write_file", path="new/a.py", content="print(1)\n")
     assert not r.ok and not (ws / "new" / "a.py").exists()
-    assert approver.requests[0].kind == "create_file"
+    assert approver.requests[0].kind == "write_file"
 
 
-def test_create_approved_writes_file(settings, ws):
+def test_write_new_file_approved(settings, ws):
     ctx, _ = make_ctx(settings, [True])
-    assert call(ctx, "create_file", path="new/a.py", content="print(1)\n").ok
+    r = call(ctx, "write_file", path="new/a.py", content="print(1)\n")
+    assert r.output == "created new/a.py"
     assert (ws / "new" / "a.py").read_text() == "print(1)\n"
 
 
-def test_create_refuses_existing_file(settings, ws):
-    (ws / "a.py").write_text("old")
+def test_replace_shows_diff_and_deny_keeps_file(settings, ws):
+    (ws / "a.py").write_bytes(b"x = 1\ny = 2\n")
+    ctx, approver = make_ctx(settings, [False])
+    r = call(ctx, "write_file", path="a.py", content="x = 1\ny = 3\n")
+    assert not r.ok and (ws / "a.py").read_bytes() == b"x = 1\ny = 2\n"
+    req = approver.requests[0]
+    assert req.summary == "replace a.py" and "-y = 2" in req.detail and "+y = 3" in req.detail
+
+
+def test_replace_approved(settings, ws):
+    (ws / "a.py").write_bytes(b"x = 1\n")
+    ctx, _ = make_ctx(settings, [True])
+    assert call(ctx, "write_file", path="a.py", content="x = 2\n").output == "replaced a.py"
+    assert (ws / "a.py").read_bytes() == b"x = 2\n"
+
+
+def test_replace_keeps_crlf_line_endings(settings, ws):
+    (ws / "a.py").write_bytes(b"a = 1\r\nb = 2\r\n")
+    ctx, _ = make_ctx(settings, [True])
+    assert call(ctx, "write_file", path="a.py", content="a = 1\nb = 3\n").ok
+    assert (ws / "a.py").read_bytes() == b"a = 1\r\nb = 3\r\n"
+
+
+def test_unchanged_content_needs_no_approval(settings, ws):
+    (ws / "a.py").write_bytes(b"x = 1\n")
     ctx, approver = make_ctx(settings, [True])
-    assert not call(ctx, "create_file", path="a.py", content="new").ok
-    assert (ws / "a.py").read_text() == "old" and approver.requests == []
+    assert call(ctx, "write_file", path="a.py", content="x = 1\n").ok and approver.requests == []
+
+
+@pytest.mark.parametrize("path", ["../out.txt", ".env", "sub"])
+def test_write_refuses_escape_secret_and_directory(settings, ws, path):
+    (ws / "sub").mkdir()
+    ctx, approver = make_ctx(settings, [True])
+    assert not call(ctx, "write_file", path=path, content="x").ok and approver.requests == []
+
+
+def test_edit_missing_file_points_to_write_file(settings):
+    ctx, _ = make_ctx(settings, [True])
+    assert "write_file" in call(ctx, "edit_file", path="nope.py", old="a", new="b").error
+
+
+def test_invalid_arguments_include_usage():
+    # Seen in eval: edit_file with old="" repeated 3 times; the error must say what to do.
+    with pytest.raises(InvalidToolCall, match="use write_file"):
+        validate(default_tools(), ToolCall("edit_file", {"path": "A.txt", "old": "", "new": "5"}))
 
 
 # --- edit_file (F4) ---

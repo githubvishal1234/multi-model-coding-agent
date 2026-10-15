@@ -1,4 +1,4 @@
-"""read_file, search_repo, create_file, edit_file."""
+"""read_file, search_repo, write_file, edit_file."""
 
 import difflib
 import fnmatch
@@ -92,9 +92,18 @@ class SearchRepo(Tool):
         return ToolResult(ok=True, output="\n".join(hits) or "no matches")
 
 
-class CreateFile(Tool):
-    name = "create_file"
-    description = "Create a new file with the given content. Fails if the file already exists."
+def _crlf(s: str) -> str:
+    return s.replace("\r\n", "\n").replace("\n", "\r\n")
+
+
+class WriteFile(Tool):
+    """Whole-file writes suit small models: they write complete files far more reliably than
+    exact search/replace edits (eval transcripts: broken indentation, failed matches)."""
+
+    name = "write_file"
+    description = ("Create a file, or replace a whole file, with its complete new content. "
+                   "Best for new files and small files. Always write the entire file, "
+                   "never a fragment.")
 
     class Args(BaseModel):
         path: str = Field(min_length=1)
@@ -102,28 +111,37 @@ class CreateFile(Tool):
 
     async def run(self, a: Args, ctx: ToolContext) -> ToolResult:
         p = ctx.resolve(a.path)
-        if p.exists():
-            return ToolResult(ok=False, error=f"{a.path} already exists; use edit_file")
-        preview = a.content[:PREVIEW_CHARS]
-        if len(a.content) > PREVIEW_CHARS:
-            preview += "\n... [preview truncated]"
-        req = ApprovalRequest("create_file", f"create {a.path} ({len(a.content)} chars)", preview)
-        if not await ctx.approve(req):
-            return ToolResult(ok=False, error="the user rejected creating this file")
+        if p.is_dir():
+            return ToolResult(ok=False, error=f"{a.path} is a directory")
+        if not p.exists():
+            preview = a.content[:PREVIEW_CHARS]
+            if len(a.content) > PREVIEW_CHARS:
+                preview += "\n... [preview truncated]"
+            summary, detail = f"create {a.path} ({len(a.content)} chars)", preview
+            content = a.content
+        else:
+            old = _read(p)
+            content = _crlf(a.content) if "\r\n" in old else a.content  # keep line endings
+            if content == old:
+                return ToolResult(ok=True, output=f"{a.path} already has this content")
+            detail = "".join(difflib.unified_diff(
+                old.splitlines(keepends=True), content.splitlines(keepends=True),
+                f"a/{a.path}", f"b/{a.path}"))
+            summary = f"replace {a.path}"
+        if not await ctx.approve(ApprovalRequest("write_file", summary, detail)):
+            return ToolResult(ok=False, error=f"the user rejected this change ({summary})")
         ctx.remember(p)
         p.parent.mkdir(parents=True, exist_ok=True)
-        _write(p, a.content)
-        return ToolResult(ok=True, output=f"created {a.path}")
-
-
-def _crlf(s: str) -> str:
-    return s.replace("\r\n", "\n").replace("\n", "\r\n")
+        _write(p, content)
+        verb = "created" if summary.startswith("create") else "replaced"
+        return ToolResult(ok=True, output=f"{verb} {a.path}")
 
 
 class EditFile(Tool):
     name = "edit_file"
-    description = ("Replace the exact text `old` with `new` in a file. `old` must appear exactly "
-                   "once; copy it from read_file output including indentation.")
+    description = ("Replace the exact text `old` with `new` in an existing file. `old` must "
+                   "appear exactly once; copy it from read_file output including indentation. "
+                   "To create a file or rewrite a small file, use write_file instead.")
 
     class Args(BaseModel):
         path: str
@@ -133,7 +151,7 @@ class EditFile(Tool):
     async def run(self, a: Args, ctx: ToolContext) -> ToolResult:
         p = ctx.resolve(a.path)
         if not p.is_file():
-            return ToolResult(ok=False, error=f"not a file: {a.path}")
+            return ToolResult(ok=False, error=f"not a file: {a.path}. Use write_file to create it.")
         text = _read(p)
         old, new = a.old, a.new
         if old not in text and "\r\n" in text:  # model wrote \n for a CRLF file

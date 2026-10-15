@@ -42,7 +42,8 @@ def run(root, agent, **kw):
 
 async def fixing_agent(task, settings):
     (settings.workspace / "value.txt").write_text("right")
-    return RunResult("done", "fixed", 3, {"prompt_tokens": 100, "completion_tokens": 20})
+    return RunResult("done", "fixed", 3, {"prompt_tokens": 100, "completion_tokens": 20},
+                     [{"role": "user", "content": "hi"}])
 
 
 async def lazy_agent(task, settings):
@@ -184,6 +185,23 @@ def test_reports_written(tmp_path):
     saved = json.loads((run_dir / "meta.json").read_text())
     assert saved["config_hash"] == meta["config_hash"] and saved["date"]
     assert "**passed: 1/1**" in (run_dir / "results.md").read_text()
+    assert "messages" not in record and "check_output" not in record
+    transcript = json.loads((run_dir / "transcripts" / "t1.json").read_text())
+    assert transcript["messages"] == [{"role": "user", "content": "hi"}]
+    assert transcript["passed"] is True
+
+
+def test_transcripts_hide_local_username(tmp_path):
+    import getpass
+
+    from eval.run import Row
+    row = Row(task="t", task_class="debug", passed=False, agent_status="done", steps=1,
+              seconds=0.1, prompt_tokens=None, completion_tokens=None, failure_reason="",
+              messages=[{"role": "tool", "content": f"C:/Users/{getpass.getuser()}/x.py"}])
+    meta = {"run_id": "r", "config_name": "x", "date": "d", "agent": "a", "model": "m",
+            "model_digest": None, "config_hash": "h", "code_commit": None, "code_dirty": False}
+    text = (write_reports(tmp_path, meta, [row]) / "transcripts" / "t.json").read_text()
+    assert getpass.getuser() not in text and "C:/Users/<user>/x.py" in text
 
 
 def test_same_config_is_reproducible(tmp_path):

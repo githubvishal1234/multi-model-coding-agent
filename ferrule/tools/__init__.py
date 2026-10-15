@@ -82,7 +82,8 @@ def validate(tools: dict[str, Tool], call: ToolCall) -> tuple[Tool, BaseModel]:
         problems = "; ".join(
             f"{'.'.join(map(str, err['loc'])) or 'args'}: {err['msg']}" for err in e.errors()
         )
-        raise InvalidToolCall(f"invalid arguments for {call.name}: {problems}") from None
+        raise InvalidToolCall(f"invalid arguments for {call.name}: {problems}. "
+                              f"Usage: {tool.description}") from None
 
 
 async def run_tool(tool: Tool, args: BaseModel, ctx: ToolContext) -> ToolResult:
@@ -103,7 +104,7 @@ async def run_tool(tool: Tool, args: BaseModel, ctx: ToolContext) -> ToolResult:
 
 def default_tools() -> dict[str, Tool]:
     from ferrule.tools.commands import RunCommand, RunTests
-    from ferrule.tools.files import CreateFile, EditFile, ReadFile, SearchRepo
+    from ferrule.tools.files import EditFile, ReadFile, SearchRepo, WriteFile
 
-    return {t.name: t for t in (ReadFile(), SearchRepo(), CreateFile(), EditFile(),
+    return {t.name: t for t in (ReadFile(), SearchRepo(), WriteFile(), EditFile(),
                                 RunCommand(), RunTests())}

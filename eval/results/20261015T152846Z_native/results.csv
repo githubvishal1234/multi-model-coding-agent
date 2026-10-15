@@ -1,0 +1,21 @@
+task,task_class,passed,agent_status,steps,seconds,prompt_tokens,completion_tokens,failure_reason
+add_config_loader,boilerplate,False,done,4,60.62,4550,361,check failed: ...==================== short test summary info =========================== ERROR test_check_config.py - ValueError: mutable default <class 'list'> for f... !!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!! 1 error in 0.20s
+add_lines_flag,boilerplate,False,max_steps,15,196.67,38668,750,agent max_steps: stopped after 15 steps
+add_version_route,boilerplate,True,done,5,46.65,5255,266,
+answer_db_config,explain,False,done,4,32.17,3550,155,check failed: ...FAIL: ANSWER.md does not mention load_database_url
+docstring_area,small_edit,True,done,7,53.74,7551,284,
+explain_order_sync,explain,True,done,5,37.37,5613,162,
+extract_tax_rate,multi_file_refactor,False,max_steps,15,119.43,24419,571,agent max_steps: stopped after 15 steps
+fix_from_traceback,debug,False,done,4,37.6,4080,180,"check failed: ...======== short test summary info =========================== FAILED test_check_empty_day.py::test_empty_day_report - ZeroDivisionError: di... FAILED test_check_empty_day.py::test_root_cause_fixed_in_metrics - ZeroDivisi... 2 failed, 3 passed in 0.10s"
+fix_median,debug,True,done,12,78.84,17376,338,
+fix_mutable_default,debug,False,done,3,22.41,2669,82,"check failed: ...e' object has no attribute 'append' cart.py:3: AttributeError =========================== short test summary info =========================== FAILED test_check_cart.py::test_new_cart_on_each_call - AttributeError: 'None... 1 failed, 3 passed in 0.08s"
+fix_pagination,debug,True,done,4,31.21,3919,132,
+fix_restock_big_module,long_context,False,max_steps,15,86.8,17169,442,agent max_steps: stopped after 15 steps
+print_to_logging,small_edit,False,done,6,45.2,6231,213,"check failed: ...======== short test summary info =========================== FAILED test_check_logging.py::test_log_records - AssertionError: assert [] ==... FAILED test_check_logging.py::test_no_print_and_no_logging_config - Assertion... 2 failed, 1 passed in 0.09s"
+remove_unused_function,long_context,False,done,5,26.41,4347,101,"check failed: ...in items), 2)}', ...} test_check_unused.py:14: AssertionError =========================== short test summary info =========================== FAILED test_check_unused.py::test_exactly_the_unused_function_was_removed - A... 1 failed, 2 passed in 0.13s"
+rename_calc_total,multi_file_refactor,False,done,6,58.56,6549,332,"check failed: ...======== short test summary info =========================== FAILED test_check_rename.py::test_renamed_without_alias - AssertionError: ass... FAILED test_check_rename.py::test_old_name_gone_everywhere - AssertionError: ... 2 failed, 3 passed in 0.10s"
+test_parse_duration,tests,False,timeout,0,300.2,,,agent timeout: model call timed out
+test_slugify,tests,False,max_steps,15,138.95,26807,809,agent max_steps: stopped after 15 steps
+test_stack,tests,False,done,2,90.96,1880,550,check failed: ...FAIL: test_stack.py was not created
+trace_retry_default,long_context,False,done,5,35.09,4751,144,"check failed: ...FAIL: expected 4 as the first number in ANSWER.txt, got ['10']"
+validate_withdraw,small_edit,True,done,4,29.83,3762,142,

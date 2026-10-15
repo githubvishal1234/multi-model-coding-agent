@@ -1,0 +1,54 @@
+{
+  "run_id": "20261015T105919Z_example",
+  "date": "2026-10-15T10:59:19+00:00",
+  "config_name": "example",
+  "config_hash": "c3d283be5b8f",
+  "config": {
+    "name": "example",
+    "tasks": [
+      "../tasks/*/task.yaml"
+    ],
+    "agent": "ferrule",
+    "model": "qwen2.5-coder:7b",
+    "base_url": "http://127.0.0.1:11434/v1",
+    "supports_tools": false,
+    "max_steps": 15,
+    "model_timeout": 300.0,
+    "command_timeout": 120.0,
+    "check_timeout": 120.0,
+    "params": {
+      "temperature": 0,
+      "seed": 42
+    },
+    "output_dir": "../results"
+  },
+  "agent": "ferrule",
+  "model": "qwen2.5-coder:7b",
+  "model_digest": "dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364",
+  "tasks": [
+    "add_config_loader",
+    "add_lines_flag",
+    "add_version_route",
+    "answer_db_config",
+    "docstring_area",
+    "explain_order_sync",
+    "extract_tax_rate",
+    "fix_from_traceback",
+    "fix_median",
+    "fix_mutable_default",
+    "fix_pagination",
+    "fix_restock_big_module",
+    "print_to_logging",
+    "remove_unused_function",
+    "rename_calc_total",
+    "test_parse_duration",
+    "test_slugify",
+    "test_stack",
+    "trace_retry_default",
+    "validate_withdraw"
+  ],
+  "code_commit": "c0560e10bfea50d53ef7eb25d979c65d19e145d7",
+  "code_dirty": false,
+  "python": "3.14.4",
+  "platform": "Windows-11-10.0.26300-SP0"
+}

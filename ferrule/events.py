@@ -17,7 +17,7 @@ Emit = Callable[[Event], None]
 
 @dataclass
 class ApprovalRequest:
-    kind: str  # plan | create_file | edit_file | run_command | run_tests
+    kind: str  # plan | write_file | edit_file | run_command | run_tests
     summary: str
     detail: str = ""
 

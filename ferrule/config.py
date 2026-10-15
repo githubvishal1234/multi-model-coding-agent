@@ -29,6 +29,7 @@ class Settings(BaseModel):
     model_timeout: float = Field(300, gt=0)
     command_timeout: float = Field(120, gt=0)
     max_output_chars: int = Field(8000, ge=200)
+    max_tokens: int = Field(4096, ge=256)  # per model reply; stops runaway repetition early
     approval: Literal["ask", "auto_safe"] = "ask"
     allowlist: dict[str, list[str] | None] = Field(default_factory=lambda: dict(DEFAULT_ALLOWLIST))
     test_command: list[str] = Field(default_factory=lambda: ["python", "-m", "pytest", "-q"])

@@ -1,0 +1,6 @@
+task,task_class,passed,agent_status,steps,seconds,prompt_tokens,completion_tokens,failure_reason
+add_lines_flag,boilerplate,False,done,5,64.69,5654,269,"check failed: ...nes.py::test_lines_flag[--lines] - subprocess.CalledProce... FAILED test_check_lines.py::test_lines_flag[-l] - subprocess.CalledProcessErr... FAILED test_check_lines.py::test_help_mentions_option - AssertionError: asser... 3 failed, 2 passed in 1.16s"
+explain_order_sync,explain,False,done,2,21.94,2033,60,check failed: ...FAIL: ANSWER.json was not created
+fix_mutable_default,debug,False,done,1,37.05,843,185,"check failed: ... Use -v to get more diff test_check_cart.py:6: AssertionError =========================== short test summary info =========================== FAILED test_check_cart.py::test_new_cart_on_each_call - AssertionError: asser... 1 failed, 3 passed in 0.09s"
+print_to_logging,small_edit,False,done,5,50.28,6145,232,"check failed: ...======== short test summary info =========================== FAILED test_check_logging.py::test_log_records - NameError: name 'logger' is ... FAILED test_importer.py::test_parse_rows - NameError: name 'logger' is not de... 2 failed, 1 passed in 0.09s"
+test_parse_duration,tests,False,timeout,0,300.35,,,agent timeout: model call timed out

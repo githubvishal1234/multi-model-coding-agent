@@ -21,13 +21,14 @@ def print_event(e: Event) -> None:
         print(f"\n-> {d['tool']} {json.dumps(d['args'])[:300]}")
     elif e.kind == "tool_result":
         print(f"<- {d['tool']}: " + ("ok" if d["ok"] else f"failed: {d['error']}"))
-    elif e.kind in ("error", "stopped"):
+    elif e.kind in ("error", "stopped", "notice"):
         print(f"\n[{e.kind}] {d.get('message', '')}")
 
 
 async def _run(settings: Settings, task: str, plan: bool):
     provider = OpenAICompatProvider(settings.base_url, settings.model,
-                                    timeout=settings.model_timeout)
+                                    timeout=settings.model_timeout,
+                                    params={"max_tokens": settings.max_tokens})
     try:
         return await Agent(provider, settings, CliApprover(), print_event).run(task, plan=plan)
     finally:

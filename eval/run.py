@@ -9,6 +9,7 @@ and meta.json.
 import argparse
 import asyncio
 import csv
+import getpass
 import hashlib
 import json
 import platform
@@ -62,6 +63,9 @@ class Row(BaseModel):
     prompt_tokens: int | None
     completion_tokens: int | None
     failure_reason: str
+    # Not in results.csv; written to transcripts/<task>.json so failures can be diagnosed.
+    messages: list[dict] = Field(default_factory=list, exclude=True)
+    check_output: str = Field("", exclude=True)
 
 
 AgentFn = Callable[[Task, Settings], Awaitable[RunResult]]
@@ -76,7 +80,7 @@ def expand(argv: list[str]) -> list[str]:
 def ferrule_agent(cfg: EvalConfig) -> AgentFn:
     async def run(task: Task, settings: Settings) -> RunResult:
         provider = OpenAICompatProvider(cfg.base_url, cfg.model, timeout=cfg.model_timeout,
-                                        params=cfg.params)
+                                        params={"max_tokens": settings.max_tokens, **cfg.params})
         try:
             agent = Agent(provider, settings, ScriptedApprover(default=True))
             return await agent.run(task.instruction)
@@ -147,7 +151,7 @@ async def run_task(task: Task, agent: AgentFn, cfg: EvalConfig) -> Row:
                agent_status=result.status, steps=result.steps, seconds=seconds,
                prompt_tokens=result.usage.get("prompt_tokens"),
                completion_tokens=result.usage.get("completion_tokens"),
-               failure_reason=reason)
+               failure_reason=reason, messages=result.messages, check_output=check_output)
 
 
 # --- metadata and reports ---
@@ -223,11 +227,19 @@ def write_reports(out_dir: Path, meta: dict, rows: list[Row]) -> Path:
     run_dir = out_dir / meta["run_id"]
     run_dir.mkdir(parents=True, exist_ok=True)
     with open(run_dir / "results.csv", "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(Row.model_fields))
+        fields = [name for name, info in Row.model_fields.items() if not info.exclude]
+        writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
         writer.writerows(r.model_dump() for r in rows)
     (run_dir / "results.md").write_text(markdown(meta, rows), encoding="utf-8")
     (run_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    transcripts = run_dir / "transcripts"
+    transcripts.mkdir(exist_ok=True)
+    for r in rows:
+        record = {"task": r.task, "passed": r.passed, "agent_status": r.agent_status,
+                  "check_output": r.check_output, "messages": r.messages}
+        text = json.dumps(record, indent=2).replace(getpass.getuser(), "<user>")  # local paths
+        (transcripts / f"{r.task}.json").write_text(text, encoding="utf-8")
     return run_dir
 
 

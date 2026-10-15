@@ -78,14 +78,72 @@ def run(provider, settings, approver=None, task="do it", plan=False, **overrides
 def test_loop_runs_tools_until_done(settings, ws):  # F9
     (ws / "a.txt").write_text("hello")
     provider = MockProvider(tool_reply("read_file", path="a.txt"),
-                            tool_reply("create_file", path="b.txt", content="hi"),
+                            tool_reply("write_file", path="b.txt", content="hi"),
+                            tool_reply("run_tests"),
                             Reply(content="Created b.txt."))
     result, events = run(provider, settings)
-    assert result.status == "done" and result.steps == 3 and result.answer == "Created b.txt."
+    assert result.status == "done" and result.steps == 4 and result.answer == "Created b.txt."
     assert (ws / "b.txt").read_text() == "hi"
     assert [e.kind for e in events if e.kind != "token"] == \
-        ["tool_call", "tool_result", "tool_call", "tool_result", "done"]
+        ["tool_call", "tool_result"] * 3 + ["done"]
     assert "Result of read_file:\nhello" in provider.calls[1]["messages"][-1]["content"]
+    roles = [m["role"] for m in result.messages]
+    assert roles == ["system", "user"] + ["assistant", "user"] * 3 + ["assistant"]
+    assert result.messages[-1] == {"role": "assistant", "content": "Created b.txt."}
+
+
+# --- finish checks: one nudge each before a final answer is accepted ---
+
+def notices(events):
+    return [e.data["message"] for e in events if e.kind == "notice"]
+
+
+def test_final_answer_without_changes_is_nudged_once(settings, ws):
+    # Seen in eval: the model describes the fix in text instead of editing the file.
+    (ws / "cart.py").write_text("x = 1\n")
+    provider = MockProvider(Reply(content="Change x = 1 to x = 2."),
+                            tool_reply("edit_file", path="cart.py", old="x = 1", new="x = 2"),
+                            tool_reply("run_tests"),
+                            Reply(content="Fixed."))
+    result, events = run(provider, settings)
+    assert result.status == "done" and (ws / "cart.py").read_text() == "x = 2\n"
+    [notice] = notices(events)
+    assert notice.startswith("You have not changed") and "```tool" in notice
+
+
+def test_question_only_task_finishes_after_one_nudge(settings):
+    provider = MockProvider(Reply(content="It returns 4."))
+    result, events = run(provider, settings)
+    assert result.status == "done" and result.answer == "It returns 4."
+    assert len(provider.calls) == 2 and len(notices(events)) == 1
+
+
+def test_untested_changes_are_nudged_once(settings, ws):
+    # Seen in eval: edits used a name that was never imported; running tests would show it.
+    (ws / "a.py").write_text("x = 1\n")
+    provider = MockProvider(tool_reply("edit_file", path="a.py", old="x = 1", new="x = 2"),
+                            Reply(content="Done."),
+                            tool_reply("run_tests"),
+                            Reply(content="Done, tests run."))
+    result, events = run(provider, settings)
+    assert result.status == "done" and result.answer == "Done, tests run."
+    [notice] = notices(events)
+    assert "run_tests" in notice
+    assert '"tool": "run_tests"' in notice and "write_file" not in notice  # matching example
+    assert any(e.kind == "tool_call" and e.data["tool"] == "run_tests" for e in events)
+
+
+def test_nudges_do_not_repeat(settings, ws):
+    (ws / "a.py").write_text("x = 1\n")
+    provider = MockProvider(tool_reply("edit_file", path="a.py", old="x = 1", new="x = 2"),
+                            Reply(content="Done."))  # repeats, never runs tests
+    result, events = run(provider, settings)
+    assert result.status == "done" and len(notices(events)) == 1
+
+
+def test_native_mode_nudge_has_no_fence_reminder(settings):
+    result, events = run(MockProvider(Reply(content="ok")), settings, supports_tools=True)
+    assert result.status == "done" and "```tool" not in notices(events)[0]
 
 
 def test_native_mode_sends_tool_messages(settings, ws):
@@ -126,7 +184,7 @@ def test_valid_call_resets_invalid_counter(settings, ws):
 
 def test_plan_rejected_changes_nothing(settings, ws):  # F11
     provider = MockProvider(Reply(content="1. create b.txt"),
-                            tool_reply("create_file", path="b.txt", content="x"))
+                            tool_reply("write_file", path="b.txt", content="x"))
     approver = ScriptedApprover([False], default=True)
     result, events = run(provider, settings, approver, plan=True)
     assert result.status == "plan_rejected"
@@ -137,7 +195,7 @@ def test_plan_rejected_changes_nothing(settings, ws):  # F11
 
 def test_plan_approved_then_runs(settings, ws):
     provider = MockProvider(Reply(content="1. create b.txt"),
-                            tool_reply("create_file", path="b.txt", content="x"),
+                            tool_reply("write_file", path="b.txt", content="x"),
                             Reply(content="done"))
     result, _ = run(provider, settings, plan=True)
     assert result.status == "done" and (ws / "b.txt").exists()
@@ -151,6 +209,17 @@ def test_model_timeout(settings):
 
     result, _ = run(Slow(Reply()), settings, model_timeout=0.05)
     assert result.status == "timeout"
+    assert result.messages[-1]["content"].endswith("[model call timed out]")
+
+
+def test_timeout_keeps_partial_reply(settings):
+    class Rambling(MockProvider):
+        async def chat(self, messages, tools=None, on_token=None):
+            on_token("I will write the tests now")
+            await asyncio.sleep(5)
+
+    result, _ = run(Rambling(Reply()), settings, model_timeout=0.05)
+    assert result.messages[-1]["content"] == "I will write the tests now\n[model call timed out]"
 
 
 def test_provider_error_stops(settings):
@@ -172,7 +241,7 @@ def test_undo_restores_edits_and_removes_created_files(settings, ws):
     (ws / "a.txt").write_text("original\n")
     provider = MockProvider(tool_reply("edit_file", path="a.txt", old="original", new="changed"),
                             tool_reply("edit_file", path="a.txt", old="changed", new="twice"),
-                            tool_reply("create_file", path="sub/b.txt", content="new"),
+                            tool_reply("write_file", path="sub/b.txt", content="new"),
                             Reply(content="done"))
     run(provider, settings)
     assert (ws / "a.txt").read_text() == "twice\n" and (ws / "sub" / "b.txt").exists()
