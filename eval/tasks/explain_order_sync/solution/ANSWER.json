@@ -1,0 +1,5 @@
+{
+  "skipped_statuses": ["cancelled", "test"],
+  "attempts_per_page": 3,
+  "on_final_timeout": "raise"
+}

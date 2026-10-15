@@ -1,0 +1,13 @@
+id: explain_order_sync
+class: explain
+instruction: |-
+  Read sync.py and answer three questions about sync_orders(). Write the answers to
+  ANSWER.json in the repository root as a JSON object with exactly these keys:
+    "skipped_statuses": list of order statuses that are never stored
+    "attempts_per_page": total number of times one page is requested before giving up
+    "on_final_timeout": what happens after the last failed attempt; one of "raise", "skip_page", "stop"
+  Do not change any code.
+check:
+  command: ["{python}", "check_answer.py"]
+  files: check
+solution: solution

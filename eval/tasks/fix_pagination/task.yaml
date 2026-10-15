@@ -1,0 +1,9 @@
+id: fix_pagination
+class: debug
+instruction: >-
+  Users report that page 1 of the product list shows what should be on page 2, and the
+  first products never appear at all. The paging logic is in pagination.py. Fix the bug.
+check:
+  command: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+  files: check
+solution: solution

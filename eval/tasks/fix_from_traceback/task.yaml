@@ -1,0 +1,20 @@
+id: fix_from_traceback
+class: debug
+instruction: |-
+  This traceback came from production on a day with no orders:
+
+  Traceback (most recent call last):
+    File "/srv/shop/jobs/morning_email.py", line 31, in send_report
+      report = build_daily_report(all_orders, today)
+    File "/srv/shop/daily.py", line 10, in build_daily_report
+      "aov": average_order_value(todays_orders),
+    File "/srv/shop/metrics.py", line 8, in average_order_value
+      return round(total / len(orders), 2)
+  ZeroDivisionError: division by zero
+
+  Fix the root cause, not just the report, so that the average order value is 0.0
+  when there are no orders. Other behaviour must stay the same.
+check:
+  command: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+  files: check
+solution: solution
