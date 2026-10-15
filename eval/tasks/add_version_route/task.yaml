@@ -1,0 +1,9 @@
+id: add_version_route
+class: boilerplate
+instruction: >-
+  Add a route "/version" to app.py that returns {"version": __version__}
+  (already imported from version.py), following the same pattern as the /health route.
+check:
+  command: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+  files: check
+solution: solution

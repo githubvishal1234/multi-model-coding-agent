@@ -1,0 +1,9 @@
+id: rename_calc_total
+class: multi_file_refactor
+instruction: >-
+  Rename the function calc_total to compute_total everywhere in this project:
+  the definition and every call site. Do not keep the old name as an alias.
+check:
+  command: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+  files: check
+solution: solution

@@ -1,0 +1,9 @@
+id: fix_median
+class: debug
+instruction: >-
+  test_median_even in test_stats.py fails. Find and fix the bug in stats.py.
+  Do not change the tests.
+check:
+  command: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+  files: check
+solution: solution

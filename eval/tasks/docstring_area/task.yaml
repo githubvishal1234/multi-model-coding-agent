@@ -1,0 +1,9 @@
+id: docstring_area
+class: small_edit
+instruction: >-
+  Add a docstring to the area() function in geometry.py that explains the width and
+  height parameters and the return value. Do not change its behaviour.
+check:
+  command: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+  files: check
+solution: solution

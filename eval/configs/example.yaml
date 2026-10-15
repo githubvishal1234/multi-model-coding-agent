@@ -1,0 +1,14 @@
+# python -m eval.run --config eval/configs/example.yaml
+# Verify the tasks themselves:   add --agent noop (all must FAIL) / --agent reference (all must PASS)
+name: example
+tasks: ["../tasks/*/task.yaml"]
+agent: ferrule
+model: qwen2.5-coder:7b
+base_url: http://127.0.0.1:11434/v1
+supports_tools: false        # prompted tool calls; set true to test native function calling
+max_steps: 15
+model_timeout: 300
+command_timeout: 120
+check_timeout: 120
+params: {temperature: 0, seed: 42}   # fixed sampling so reruns are comparable
+output_dir: ../results

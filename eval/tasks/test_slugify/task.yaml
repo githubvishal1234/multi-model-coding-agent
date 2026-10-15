@@ -1,0 +1,9 @@
+id: test_slugify
+class: tests
+instruction: >-
+  Write pytest tests for slugify() from text.py in a new file test_text.py.
+  Cover at least: normal words with capital letters, punctuation, and extra whitespace.
+check:
+  command: ["{python}", "check_tests.py"]
+  files: check
+solution: solution
