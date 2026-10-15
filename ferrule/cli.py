@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from ferrule.agent import Agent
-from ferrule.config import Settings
+from ferrule.config import Settings, load_dotenv
 from ferrule.events import CliApprover, Event
 from ferrule.hardware import detect, estimate_gb, load_speeds, save_speeds, select_local
 from ferrule.providers import OllamaAdmin, OpenAICompatProvider, ProviderError
@@ -123,6 +123,7 @@ async def _doctor(settings: Settings, speed_test: bool, offer_pull: bool) -> int
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv(Path.cwd() / ".env")  # API keys; real env vars win
     sys.stdout.reconfigure(errors="replace")  # model output may not fit the console encoding
     parser = argparse.ArgumentParser(prog="ferrule",
                                      description="Local coding agent for free models.")

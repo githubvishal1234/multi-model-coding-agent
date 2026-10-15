@@ -2,7 +2,7 @@
 
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 from typing import Literal, get_origin
 
@@ -16,6 +16,32 @@ DEFAULT_ALLOWLIST: dict[str, list[str] | None] = {
     "git": ["status", "diff", "log", "show"],
     "npm": ["test", "run"],
 }
+
+
+def load_dotenv(path: Path, environ: MutableMapping[str, str] | None = None) -> list[str]:
+    """Read KEY=VALUE lines from a .env file into the environment. Variables that are already
+    set win. Blank lines, # comments, `export ` prefixes and surrounding quotes are handled.
+    Returns the names loaded (never the values)."""
+    environ = os.environ if environ is None else environ
+    try:
+        lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return []
+    loaded = []
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.removeprefix("export ").split("=", 1)
+        key, value = key.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        elif " #" in value:  # trailing comment on an unquoted value
+            value = value.split(" #", 1)[0].rstrip()
+        if key and value and key not in environ:
+            environ[key] = value
+            loaded.append(key)
+    return loaded
 
 
 class Settings(BaseModel):

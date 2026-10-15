@@ -6,6 +6,21 @@ from pydantic import ValidationError
 from ferrule.config import Settings
 
 
+def test_load_dotenv(tmp_path):
+    from ferrule.config import load_dotenv
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "# comment\n\nGROQ_API_KEY=gsk_abc123\nexport GEMINI_API_KEY='g-key'\n"
+        'OPENROUTER_API_KEY="sk-or-xyz"\nCEREBRAS_API_KEY=\nFERRULE_PROFILE=quality  # note\n'
+        "ALREADY=from-file\nnot a line\n", encoding="utf-8")
+    environ = {"ALREADY": "real"}
+    loaded = load_dotenv(env_file, environ)
+    assert environ == {"ALREADY": "real", "GROQ_API_KEY": "gsk_abc123", "GEMINI_API_KEY": "g-key",
+                       "OPENROUTER_API_KEY": "sk-or-xyz", "FERRULE_PROFILE": "quality"}
+    assert "CEREBRAS_API_KEY" not in loaded and "ALREADY" not in loaded  # empty / already set
+    assert load_dotenv(tmp_path / "missing.env", environ) == []
+
+
 def test_defaults():
     s = Settings.from_env({})
     assert s.max_steps == 20 and s.approval == "ask" and s.supports_tools is True

@@ -44,4 +44,6 @@ models:
   - {name: "llama-3.3-70b-versatile", provider: groq, params_b: 70, context: 131072, supports_tools: true}
   - {name: "llama-3.3-70b", provider: cerebras, params_b: 70, context: 65536, supports_tools: true}
   - {name: "gemini-2.5-flash", provider: gemini, params_b: null, context: 1048576, supports_tools: true}
-  - {name: "qwen/qwen3-coder:free", provider: openrouter, params_b: 480, context: 262144, supports_tools: true}
+  # OpenRouter free models change often; checked against its public /models list on 2026-10-15.
+  # params_b is the total size for mixture-of-experts models (laguna-s-2.1: 8B active).
+  - {name: "poolside/laguna-s-2.1:free", provider: openrouter, params_b: 118, context: 262144, supports_tools: true}

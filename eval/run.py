@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from eval.tasks import Task, load_tasks
 from ferrule.agent import Agent, RunResult
-from ferrule.config import Settings
+from ferrule.config import Settings, load_dotenv
 from ferrule.events import ScriptedApprover
 from ferrule.hardware import load_speeds, save_speeds
 from ferrule.router import build_provider
@@ -273,6 +273,7 @@ async def run_eval(cfg: EvalConfig, base: Path, only: list[str] | None = None,
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv(Path.cwd() / ".env")  # API keys; real env vars win
     sys.stdout.reconfigure(errors="replace")
     p = argparse.ArgumentParser(prog="python -m eval.run")
     p.add_argument("--config", type=Path, required=True)
