@@ -1,0 +1,10 @@
+id: fix_mutable_default
+class: debug
+instruction: >-
+  Users report that add_item() in cart.py returns items from earlier calls when no cart
+  is passed: add_item("a") returns ["a"], but a following add_item("b") returns ["a", "b"].
+  Fix the bug.
+check:
+  command: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+  files: check
+solution: solution

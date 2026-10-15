@@ -1,0 +1,10 @@
+id: validate_withdraw
+class: small_edit
+instruction: >-
+  Make Account.withdraw() in account.py raise ValueError when the amount is not positive
+  or is more than the current balance, the same way deposit() validates. The balance must
+  not change when it raises.
+check:
+  command: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+  files: check
+solution: solution

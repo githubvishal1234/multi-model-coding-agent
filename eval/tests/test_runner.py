@@ -194,15 +194,14 @@ def test_markdown_escapes_pipes():
     assert "a \\| b" in markdown(meta, [row])
 
 
-# --- the shipped starter tasks are well-formed ---
+# --- every task in eval/tasks is well-formed (runs on each task you add) ---
 
-def test_starter_tasks_fail_untouched_and_pass_with_reference():
+def test_all_tasks_fail_untouched_and_pass_with_reference():
     from eval.run import load_config
     config = load_config(EXAMPLE / "example.yaml")
-    for agent in ("noop", "reference"):
+    for agent, expected in (("noop", False), ("reference", True)):
         _, rows = asyncio.run(run_eval(config.model_copy(update={"agent": agent}), EXAMPLE,
                                        progress=lambda *_: None))
-        assert len(rows) == 5
-        expected = agent == "reference"
-        assert [r.passed for r in rows] == [expected] * 5, [(r.task, r.failure_reason)
-                                                            for r in rows]
+        assert len(rows) >= 5
+        wrong = [(r.task, r.failure_reason) for r in rows if r.passed != expected]
+        assert not wrong, f"with --agent {agent}: {wrong}"

@@ -1,0 +1,10 @@
+id: extract_tax_rate
+class: multi_file_refactor
+instruction: >-
+  The 18% tax rate is hard-coded in invoice.py, receipt.py and quote.py. Add
+  TAX_RATE = 0.18 to settings.py and make all three modules use it, including the
+  percentage shown in the receipt label. Behaviour must stay the same.
+check:
+  command: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+  files: check
+solution: solution
