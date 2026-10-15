@@ -125,7 +125,7 @@ async def run_task(task: Task, agent: AgentFn, cfg: EvalConfig) -> Row:
         shutil.copytree(task.path(task.repo), workspace)
         settings = Settings(
             workspace=workspace, home=Path(tmp) / "home", model=cfg.model,
-            supports_tools=cfg.supports_tools, max_steps=cfg.max_steps,
+            supports_tools=cfg.supports_tools, max_steps=task.max_steps or cfg.max_steps,
             model_timeout=cfg.model_timeout, command_timeout=cfg.command_timeout,
             test_command=expand(task.test_command),
         )

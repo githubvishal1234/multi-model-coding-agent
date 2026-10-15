@@ -1,0 +1,11 @@
+id: trace_retry_default
+class: long_context
+instruction: >-
+  When payments.client.charge() is used and the BANK_RETRIES environment variable is not
+  set, how many times does it call the bank before giving up? Trace the value to where it
+  is defined and write just the number to ANSWER.txt in the repository root.
+  Do not change any code.
+check:
+  command: ["{python}", "check_answer.py"]
+  files: check
+solution: solution

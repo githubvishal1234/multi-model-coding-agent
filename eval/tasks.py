@@ -12,6 +12,7 @@ A task is a directory with task.yaml:
       expect_exit: 0
       files: check                # optional hidden files copied in only for the check
     solution: solution            # optional reference files; used by --agent reference
+    max_steps: 40                 # optional; overrides the config for tasks that need more
 
 Paths are relative to the task directory.
 """
@@ -44,6 +45,7 @@ class Task(BaseModel):
     test_command: list[str] = Field(default_factory=lambda: list(DEFAULT_TEST_COMMAND))
     check: Check
     solution: str | None = None
+    max_steps: int | None = Field(None, ge=1)
     dir: Path = Field(default=Path("."), exclude=True)
 
     def path(self, rel: str) -> Path:

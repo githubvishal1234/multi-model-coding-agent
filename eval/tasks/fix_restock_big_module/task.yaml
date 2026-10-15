@@ -1,0 +1,9 @@
+id: fix_restock_big_module
+class: long_context
+instruction: >-
+  test_restock_existing_sku in test_inventory.py fails. Find and fix the bug in
+  inventory.py. Do not change the tests.
+check:
+  command: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+  files: check
+solution: solution

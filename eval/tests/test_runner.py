@@ -151,6 +151,19 @@ def test_agent_gets_task_test_command_with_python_expanded(tmp_path):
     assert s.home != s.workspace and not s.home.is_relative_to(s.workspace)
 
 
+def test_task_max_steps_overrides_config(tmp_path):
+    path = make_task(tmp_path)
+    path.write_text(path.read_text() + "max_steps: 40\n")
+    seen = {}
+
+    async def spy(task, settings):
+        seen["max_steps"] = settings.max_steps
+        return RunResult("done")
+
+    run(tmp_path, spy, max_steps=7)
+    assert seen["max_steps"] == 40
+
+
 def test_check_timeout(tmp_path):
     path = make_task(tmp_path, check_files=False)
     path.write_text(path.read_text().replace(

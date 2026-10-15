@@ -1,0 +1,3 @@
+4
+
+payments/settings.py uses core.defaults.BANK_RETRY_LIMIT = RETRY_BASE + 1, and core/constants.py sets RETRY_BASE = 3.

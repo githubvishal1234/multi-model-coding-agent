@@ -1,0 +1,11 @@
+id: remove_unused_function
+class: long_context
+instruction: >-
+  Exactly one function in the services/ package is not used anywhere in this project:
+  it is never called and never referenced. Find it and delete it. Do not delete or
+  change anything else.
+check:
+  command: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+  files: check
+solution: solution
+max_steps: 40

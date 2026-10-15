@@ -1,0 +1,7 @@
+"""Shared constants."""
+
+PAGE_SIZE = 50
+CURRENCY = "EUR"
+RETRY_BASE = 3
+CACHE_TTL_SECONDS = 600
+MAX_UPLOAD_MB = 25
