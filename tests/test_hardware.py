@@ -73,6 +73,17 @@ def test_explanation_includes_numbers():
     assert "chosen: qwen2.5-coder:7b" in text
 
 
+def test_memory_held_by_loaded_models_counts():
+    # Seen in an eval run: once Ollama loaded the 7B model, free RAM dropped and the model in
+    # use was excluded as "does not fit".
+    busy = Hardware(ram_total_gb=24, ram_free_gb=5, cpu_cores=4, disk_free_gb=100,
+                    gpu_name="GTX 1650", vram_total_gb=4, vram_free_gb=0.5)
+    assert select_local(LOCAL, busy).chosen == "qwen2.5-coder:3b"
+    sel = select_local(LOCAL, busy, loaded_gb=5.0)
+    assert sel.chosen == "qwen2.5-coder:7b"
+    assert "5.0 GB held by loaded Ollama models" in sel.lines[0]
+
+
 def test_nothing_fits():
     tiny = Hardware(ram_total_gb=2, ram_free_gb=0.5, cpu_cores=1, disk_free_gb=5)
     sel = select_local(LOCAL, tiny)
@@ -130,6 +141,12 @@ def test_speed_from_ollama_timings():
 def test_speed_without_timings_is_an_error():
     with pytest.raises(BadResponse):
         asyncio.run(admin(lambda req: httpx.Response(200, json={})).tokens_per_second("m"))
+
+
+def test_loaded_models():
+    body = {"models": [{"name": "qwen2.5-coder:7b", "size": 5_000_000_000}]}
+    a = admin(lambda req: httpx.Response(200, json=body))
+    assert asyncio.run(a.loaded()) == {"qwen2.5-coder:7b": 5_000_000_000}
 
 
 def test_pull_and_errors():

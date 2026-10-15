@@ -125,6 +125,14 @@ class OllamaAdmin:
             raise Unavailable(f"ollama: {type(e).__name__}: {e}") from e
         return {m["name"] for m in resp.json().get("models", [])}
 
+    async def loaded(self) -> dict[str, int]:
+        """Models Ollama currently holds in memory: name -> bytes (from /api/ps)."""
+        try:
+            resp = await self._client.get(self.base_url + "/api/ps")
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            raise Unavailable(f"ollama: {type(e).__name__}: {e}") from e
+        return {m["name"]: int(m.get("size", 0)) for m in resp.json().get("models", [])}
+
     async def pull(self, name: str) -> None:
         """Download a model. Callers must get the user's confirmation first."""
         await self._post("/api/pull", {"model": name, "stream": False})

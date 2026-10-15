@@ -13,7 +13,7 @@ from ferrule.events import CliApprover, Event
 from ferrule.hardware import detect, estimate_gb, load_speeds, save_speeds, select_local
 from ferrule.providers import OllamaAdmin, OpenAICompatProvider, ProviderError
 from ferrule.registry import load_registry
-from ferrule.router import build_provider, installed_models
+from ferrule.router import build_provider, installed_models, loaded_gb
 from ferrule.undo import undo
 
 
@@ -55,7 +55,8 @@ async def _doctor(settings: Settings, speed_test: bool, offer_pull: bool) -> int
         print(f"Ollama models installed: {', '.join(sorted(installed)) or 'none'}")
     speeds = load_speeds(settings.home)
     too_slow = {m for m, tps in speeds.items() if tps < settings.min_tokens_per_sec}
-    sel = select_local(local, hw, installed, override=settings.model, too_slow=too_slow)
+    sel = select_local(local, hw, installed, override=settings.model, too_slow=too_slow,
+                       loaded_gb=await loaded_gb(settings.base_url))
     print("\nLocal model selection (memory figures are estimates):")
     print("\n".join(sel.lines))
 
@@ -106,17 +107,18 @@ async def _doctor(settings: Settings, speed_test: bool, offer_pull: bool) -> int
         if not p.available(os.environ):
             print(f"  {pname}: off (set {p.api_key_env} to enable)")
             continue
-        client = OpenAICompatProvider(p.base_url, "-", api_key=p.api_key(os.environ),
-                                      name=pname, is_local=False, timeout=15)
-        try:
-            served = await client.available_models()
-            for m in models:
-                print(f"  {pname}: {m} " + ("is served" if m in served else
-                                            "is NOT served; update models.yaml"))
-        except ProviderError as e:
-            print(f"  {pname}: could not list models ({e})")
-        finally:
-            await client.aclose()
+        for m in models:
+            # A listed model can still refuse requests (seen with Gemini), so send a tiny one.
+            client = OpenAICompatProvider(p.base_url, m, api_key=p.api_key(os.environ),
+                                          name=pname, is_local=False, timeout=60,
+                                          params={"max_tokens": 5})
+            try:
+                await client.chat([{"role": "user", "content": "Reply with: ok"}])
+                print(f"  {pname}: {m} works")
+            except ProviderError as e:
+                print(f"  {pname}: {m} FAILED: {' '.join(str(e).split())[:200]}")
+            finally:
+                await client.aclose()
     if settings.local_only:
         print("  local-only mode is on: hosted providers will not be used")
     return 0

@@ -24,6 +24,7 @@ providers:
     base_url: https://generativelanguage.googleapis.com/v1beta/openai
     api_key_env: GEMINI_API_KEY
     caps: {requests_per_minute: 10, requests_per_day: 250}      # verify
+    drop_params: [seed]   # HTTP 400 "Unknown name seed" (seen 2026-10-15)
   openrouter:
     base_url: https://openrouter.ai/api/v1
     api_key_env: OPENROUTER_API_KEY
@@ -43,7 +44,9 @@ models:
   # --- hosted free tiers (verify ids with `ferrule doctor`) ---
   - {name: "llama-3.3-70b-versatile", provider: groq, params_b: 70, context: 131072, supports_tools: true}
   - {name: "llama-3.3-70b", provider: cerebras, params_b: 70, context: 65536, supports_tools: true}
-  - {name: "gemini-2.5-flash", provider: gemini, params_b: null, context: 1048576, supports_tools: true}
+  # gemini-2.5-flash is listed by /models but returns 404 "no longer available to new users"
+  # (2026-10-15); Google's error message points to gemini-3.8-flash.
+  - {name: "gemini-3.8-flash", provider: gemini, params_b: null, context: 1048576, supports_tools: true}
   # OpenRouter free models change often; checked against its public /models list on 2026-10-15.
   # params_b is the total size for mixture-of-experts models (laguna-s-2.1: 8B active).
   - {name: "poolside/laguna-s-2.1:free", provider: openrouter, params_b: 118, context: 262144, supports_tools: true}

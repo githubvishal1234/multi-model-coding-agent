@@ -61,4 +61,8 @@ class RunTests(Tool):
         if s.approval != "auto_safe" and not await ctx.approve(
                 ApprovalRequest("run_tests", f"run tests: {cmd}")):
             return ToolResult(ok=False, error="the user rejected running the tests")
-        return await asyncio.to_thread(_run, s.test_command, s.workspace, s.command_timeout)
+        result = await asyncio.to_thread(_run, s.test_command, s.workspace, s.command_timeout)
+        if "pytest" in cmd and result.output.startswith("exit code: 5\n"):
+            # pytest exit code 5 = no tests collected: nothing failed, so don't report failure.
+            return ToolResult(ok=True, output="no tests were collected\n" + result.output)
+        return result

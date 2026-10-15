@@ -22,6 +22,7 @@ class ProviderSpec(BaseModel):
     local: bool = False
     api_key_env: str | None = None  # the NAME of the env var, never the key
     caps: Caps = Field(default_factory=Caps)
+    drop_params: list[str] = Field(default_factory=list)  # request fields this API rejects
 
     def api_key(self, env: Mapping[str, str]) -> str | None:
         return env.get(self.api_key_env) if self.api_key_env else None

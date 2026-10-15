@@ -257,3 +257,16 @@ def test_read_only_run_leaves_no_checkpoint(settings, ws):
     (ws / "a.txt").write_text("x")
     run(MockProvider(tool_reply("read_file", path="a.txt"), Reply(content="ok")), settings)
     assert undo(settings) == []
+
+
+def test_final_answer_after_failing_tests_is_nudged_once(settings, ws):
+    # Seen in eval: the model said "done" right after a failing test run.
+    (ws / "test_a.py").write_text("def test_a():\n    assert False\n")
+    (ws / "a.py").write_text("x = 1\n")
+    provider = MockProvider(tool_reply("write_file", path="a.py", content="x = 2\n"),
+                            tool_reply("run_tests"),
+                            Reply(content="Done."))
+    result, events = run(provider, settings)
+    assert result.status == "done"
+    assert [n for n in notices(events) if n.startswith("Your last test run failed")]
+    assert len(provider.calls) == 4  # one extra turn after the nudge, then accepted

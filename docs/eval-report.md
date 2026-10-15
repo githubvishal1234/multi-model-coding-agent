@@ -34,12 +34,30 @@ What these runs show:
   The total didn't move, because the remaining failures come from the model's reasoning: wrong edits, broken indentation, and misreading the task.
 - **Native tool calls** gave the same or slightly better results in about 40% less time than prompted mode, because they avoid the model's JSON-escaping mistakes.
 
+## Router with hosted fallback (2026-10-15)
+
+Both runs used `eval/configs/router.yaml`: local `qwen2.5-coder:7b` first, escalating to `poolside/laguna-s-2.1:free` (OpenRouter), with Gemini as a fallback.
+
+| Run | Passed | Total time | What happened | Result folder |
+|---|---|---|---|---|
+| R1 | 4/20 | not comparable | Router bugs: the local model was excluded once it was loaded (memory check); `gemini-2.5-flash` returned 404 to new users | `eval/results/20261015T163741Z_router` |
+| R2 | 5/20 | 44.9 min | Bugs fixed. 16 of 20 tasks ended on the local model without escalating. The escalated ones hit `laguna-s-2.1:free` "temporarily rate-limited upstream", and Gemini rejected the `seed` field | `eval/results/20261015T173235Z_router` |
+
+What R2 shows:
+- **Free hosted capacity was the bottleneck, not the routing logic.** Every escalation landed on an overloaded free model, waited, and ran out of time.
+- **Escalation triggers were too narrow.** Most tasks ended with a confident but wrong "done" on the local model. After R2 these were added:
+  - a final answer right after a failing test run now escalates
+  - Gemini no longer receives `seed`
+  - waits are capped per model call
+
+  These haven't been measured yet. When rechecked the same day, Gemini returned "503 high demand", so a rerun was postponed.
+
 ## Classifier
 
 The rule-based task classifier (`ferrule/router.py`) agrees with the hand-written class labels on 16 of the 20 eval tasks. That's measured by `tests/test_router.py::test_eval_task_labels_vs_classifier`. The long-context tasks are recognised by repository size, not by their instructions.
 
 ## Not measured yet
 
-- **Router with hosted fallback.** No hosted API keys are configured yet. `eval/configs/router.yaml` is ready to run.
+- **Router with hosted fallback after the R2 fixes.** Waiting for free hosted capacity (see above).
 - **Latency targets (N9).** To be set from these measurements once the hosted comparison exists.
 - **Web lookup on vs off.** That's Phase 6.

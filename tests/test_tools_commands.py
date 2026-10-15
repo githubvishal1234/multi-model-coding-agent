@@ -61,6 +61,12 @@ def test_run_tests_reports_pass_and_auto_safe_skips_approval(settings, project):
     assert r.ok and "1 passed" in r.output and approver.requests == []
 
 
+def test_run_tests_with_no_tests_is_not_a_failure(settings, ws):
+    ctx, _ = make_ctx(settings, [True])
+    r = call(ctx, "run_tests")
+    assert r.ok and r.output.startswith("no tests were collected")
+
+
 def test_run_tests_denied(settings, project):
     ctx, _ = make_ctx(settings, [False])
     assert "rejected" in call(ctx, "run_tests").error

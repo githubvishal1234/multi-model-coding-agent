@@ -52,6 +52,8 @@ Tools (name: description, then JSON schema of args):
 NUDGE_NO_CHANGES = ("You have not changed or created any files yet. If the task asks you to "
                     "change code or write a file, do it now with the tools. If it truly needs no "
                     "file changes, give your final answer again.")
+NUDGE_FAILING = ("Your last test run failed. Fix the code until run_tests passes before "
+                 "giving your final answer.")
 NUDGE_UNTESTED = ("You changed files but have not run the tests since. Call run_tests now and "
                   "fix any failures before giving your final answer.")
 # Concrete call shown with each nudge in prompted mode (small models follow examples best).
@@ -59,6 +61,7 @@ NUDGE_EXAMPLES = {
     "no_changes": '{"tool": "write_file", "args": {"path": "<file>", '
                   '"content": "<the complete new file content>"}}',
     "untested": '{"tool": "run_tests", "args": {}}',
+    "failing": '{"tool": "read_file", "args": {"path": "<file the failure points to>"}}',
 }
 TEST_TOOLS = {"run_tests"}
 WRITE_TOOLS = {"write_file", "edit_file"}
@@ -163,6 +166,7 @@ class RunResult:
     usage: dict = field(default_factory=dict)
     messages: list[dict] = field(default_factory=list)  # full conversation, for eval transcripts
     model: str = ""  # the model in use when the run ended (the router may have switched)
+    events: list[dict] = field(default_factory=list)  # routing/notice/error events (eval only)
 
 
 class Agent:
@@ -256,6 +260,7 @@ class Agent:
         schemas = [t.schema() for t in self.tools.values()] if native else None
         invalid = 0
         test_failures = 0  # consecutive failing run_tests results
+        last_tests_ok: bool | None = None  # outcome of the most recent run_tests
         untested = False  # files changed since the last test run
         nudged: set[str] = set()
         for step in range(1, s.max_steps + 1):
@@ -284,6 +289,10 @@ class Agent:
                     nudge, text = "no_changes", NUDGE_NO_CHANGES
                 elif untested and "untested" not in nudged:
                     nudge, text = "untested", NUDGE_UNTESTED
+                elif last_tests_ok is False and "failing" not in nudged:
+                    # Seen in eval: models declare success right after a failing test run.
+                    nudge, text = "failing", NUDGE_FAILING
+                    self._escalate("final answer while the tests were failing")
                 if nudge:
                     nudged.add(nudge)
                     if not native:
@@ -312,6 +321,7 @@ class Agent:
                 elif call.name in TEST_TOOLS:
                     untested = False
                     test_failures = 0 if result.ok else test_failures + 1
+                    last_tests_ok = result.ok
                     if test_failures >= 2 and self._escalate("tests failed twice in a row"):
                         test_failures = 0
                 text = result.output if result.ok else f"ERROR: {result.error}\n{result.output}"

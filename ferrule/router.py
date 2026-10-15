@@ -6,6 +6,7 @@ falls back to the next model when a provider fails, and escalates to a stronger 
 agent asks. Every decision is logged with its reason.
 """
 
+import asyncio
 import os
 import re
 import time
@@ -25,6 +26,10 @@ from ferrule.providers import (
     Unavailable,
 )
 from ferrule.registry import ModelSpec, ProviderSpec, Registry
+
+COOLING = "cooling down after an error"
+MINUTE_CAP = "per-minute cap reached"
+MAX_WAIT_S = 120  # wait at most this long for a rate-limited model before giving up
 
 TASK_CLASSES = ("boilerplate", "small_edit", "explain", "tests", "debug",
                 "multi_file_refactor", "long_context")
@@ -118,7 +123,7 @@ class Router:
         if m.name in self.failed:
             return "failed earlier in this session"
         if self.cooling.get(m.provider, 0) > self.clock():
-            return f"{m.provider} cooling down after an error"
+            return f"{m.provider} {COOLING}"
         cap = self._cap_reason(m.provider, p)
         return cap
 
@@ -132,7 +137,7 @@ class Router:
         while recent and now - recent[0] >= 60:
             recent.popleft()
         if p.caps.requests_per_minute and len(recent) >= p.caps.requests_per_minute:
-            return f"{provider} per-minute cap reached"
+            return f"{provider} {MINUTE_CAP}"
         if p.caps.requests_per_day and self.day.get(provider, 0) >= p.caps.requests_per_day:
             return f"{provider} daily cap reached"
         return None
@@ -159,6 +164,26 @@ class Router:
                 usable.append(m)
         return sorted(usable, key=lambda m: self._sort_key(m, task_class)), skipped
 
+    def wait_seconds(self, task_class: str, context_needed: int = 0,
+                     exclude: set[str] = frozenset()) -> float | None:
+        """Seconds until a model that is only temporarily blocked (cooling down, per-minute
+        cap) becomes usable again; None if no model would become usable by waiting."""
+        now, best = self.clock(), None
+        for m in self.registry.models:
+            if m.name in exclude:
+                continue
+            reason = self._skip_reason(m, task_class, context_needed)
+            if reason is None:
+                return 0.0
+            if reason.endswith(COOLING):
+                t = self.cooling[m.provider] - now
+            elif reason.endswith(MINUTE_CAP):
+                t = self.minute[m.provider][0] + 60 - now
+            else:
+                continue
+            best = t if best is None else min(best, t)
+        return None if best is None else max(best, 0.0)
+
     def record_request(self, m: ModelSpec) -> None:
         if self.registry.is_local(m):
             return
@@ -180,8 +205,12 @@ class RoutedProvider:
     def __init__(self, router: Router, task_class: str, *, context_needed: int = 0,
                  make_provider: Callable[[ModelSpec, ProviderSpec], Provider] | None = None,
                  redact: Callable[[str], str] = lambda s: s, timeout: float = 300,
-                 params: dict | None = None):
+                 params: dict | None = None, max_wait_s: float = MAX_WAIT_S,
+                 sleep: Callable = asyncio.sleep):
         self.router = router
+        self.max_wait_s = max_wait_s
+        self._sleep = sleep
+        self._waited = 0.0
         self.task_class = task_class
         self.context_needed = context_needed
         self.redact = redact
@@ -199,9 +228,10 @@ class RoutedProvider:
         self.emit, self.audit = emit, audit
 
     def _default_provider(self, m: ModelSpec, p: ProviderSpec) -> Provider:
+        params = {k: v for k, v in self.params.items() if k not in p.drop_params}
         return OpenAICompatProvider(p.base_url, m.name, api_key=p.api_key(self.router.env),
                                     name=m.provider, is_local=p.local, timeout=self.timeout,
-                                    params=self.params)
+                                    params=params)
 
     def _client(self, m: ModelSpec) -> Provider:
         if m.name not in self._clients:
@@ -253,15 +283,32 @@ class RoutedProvider:
             self.current = previous
             return False
 
-    async def chat(self, messages, tools=None, on_token=None) -> Reply:
+    async def _select_or_wait(self, reason: str) -> ModelSpec:
+        """Like _select, but if every usable model is only rate-limited, wait for one.
+        The wait budget (max_wait_s) covers the whole chat() call, not each fallback."""
         while True:
-            m = self._model()
+            try:
+                return self._select(reason)
+            except NoModelAvailable:
+                wait = self.router.wait_seconds(self.task_class, self.context_needed, self.tried)
+                if wait is None or self._waited + wait > self.max_wait_s:
+                    raise
+                self._log("notice", message=f"all usable models are rate-limited; "
+                          f"waiting {wait:.0f}s")
+                await self._sleep(wait + 0.5)
+                self._waited += wait + 0.5
+
+    async def chat(self, messages, tools=None, on_token=None) -> Reply:
+        self._waited = 0.0
+        if self.current is None:
+            await self._select_or_wait("best available model")
+        while True:
+            m = self.current
             local = self.router.registry.is_local(m)
             cap = None if local else self.router._cap_reason(m.provider,
                                                              self.router.registry.provider(m))
-            if cap:
-                self.tried.add(m.name)
-                self._select(f"{m.name} skipped: {cap}")
+            if cap:  # temporary: the model stays eligible once the cap window passes
+                await self._select_or_wait(f"{m.name} skipped: {cap}")
                 continue
             if not local and m.provider not in self.notified:
                 self.notified.add(m.provider)
@@ -273,20 +320,31 @@ class RoutedProvider:
             self.router.record_request(m)
             try:
                 return await self._client(m).chat(sent, tools, on_token)
-            except (RateLimited, Unavailable) as e:
+            except (RateLimited, Unavailable) as e:  # temporary: cool down, maybe come back
                 self.router.cool_down(m.provider)
                 why = f"{m.provider} {type(e).__name__}: {e}"
-            except BadResponse as e:  # e.g. the model id no longer exists
+            except BadResponse as e:  # e.g. the model id no longer exists: never retry it
                 self.router.mark_failed(m.name)
                 why = f"{m.name} error: {e}"
-            self.tried.add(m.name)
-            self._select(f"fallback after {why[:200]}")
+            await self._select_or_wait(f"fallback after {why[:200]}")
 
     async def aclose(self) -> None:
         for client in self._clients.values():
             close = getattr(client, "aclose", None)
             if close:
                 await close()
+
+
+async def loaded_gb(base_url: str) -> float:
+    """GB of memory Ollama currently holds for loaded models (0 if unknown)."""
+    from ferrule.providers import OllamaAdmin
+    admin = OllamaAdmin(base_url, timeout=10)
+    try:
+        return round(sum((await admin.loaded()).values()) / 1024**3, 1)
+    except (Unavailable, ValueError, KeyError):
+        return 0.0
+    finally:
+        await admin.aclose()
 
 
 async def installed_models(base_url: str) -> set[str] | None:
@@ -318,7 +376,7 @@ async def build_provider(settings, task: str, extra_params: dict | None = None) 
                 if tps < settings.min_tokens_per_sec}
     local = [m for m in registry.models if registry.is_local(m)]
     selection = select_local(local, detect(disk_path=settings.workspace), installed,
-                             too_slow=too_slow)
+                             too_slow=too_slow, loaded_gb=await loaded_gb(settings.base_url))
     router = Router(registry, local_only=settings.local_only,
                     native_tools=settings.supports_tools, profile=settings.profile,
                     installed=installed, local_fit=set(selection.fitting), too_slow=too_slow,

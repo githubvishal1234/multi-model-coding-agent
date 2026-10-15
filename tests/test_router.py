@@ -176,11 +176,13 @@ class Audit:
         self.lines.append((event, fields))
 
 
-def routed(fakes, router=None, **kw):
+def routed(fakes, router=None, max_wait_s=0, sleep=None, **kw):
     router = router or Router(REG, KEYS, **kw)
     events, audit = [], Audit()
+    extra = {"sleep": sleep} if sleep else {}
     rp = RoutedProvider(router, "debug", make_provider=lambda m, p: fakes[m.name],
-                        redact=Redactor({"MY_TOKEN": "supersecret123"}))
+                        redact=Redactor({"MY_TOKEN": "supersecret123"}),
+                        max_wait_s=max_wait_s, **extra)
     rp.attach(events.append, audit)
     return rp, events, audit
 
@@ -268,13 +270,57 @@ def test_hosted_cap_reached_mid_session_switches_model():
         chat(rp)
 
 
+def test_waits_for_rate_limited_model_instead_of_dropping_it():
+    # Seen in an eval run: the only good hosted model hit its per-minute limit and was dropped.
+    clock = Clock()
+    slept = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+        clock.t += seconds
+
+    router = Router(REG, KEYS, local_only=True, clock=clock, cooldown_s=30)
+    fakes = {"medium": Fake("medium", [RateLimited("429"), Reply(content="after wait")]),
+             "small": Fake("small", [RateLimited("429")])}
+    rp, events, _ = routed(fakes, router=router, max_wait_s=120, sleep=fake_sleep)
+    assert chat(rp).content == "after wait"
+    assert slept and 30 <= slept[0] <= 31 and rp.model == "medium"
+    assert any("waiting" in e.data.get("message", "") for e in events if e.kind == "notice")
+
+
+def test_wait_has_a_limit():
+    clock = Clock()
+
+    async def fake_sleep(seconds):
+        clock.t += seconds
+
+    router = Router(REG, KEYS, local_only=True, clock=clock, cooldown_s=300)
+    rp, _, _ = routed({"medium": Fake("medium", [RateLimited("429")])}, router=router,
+                      max_wait_s=120, sleep=fake_sleep)
+    with pytest.raises(NoModelAvailable):
+        chat(rp)
+
+
+def test_per_minute_cap_wait_time():
+    clock = Clock()
+    r = Router(REG, KEYS, clock=clock, local_only=False)
+    fast = next(m for m in REG.models if m.name == "fast70")
+    r.record_request(fast)
+    clock.t += 10
+    r.record_request(fast)
+    exclude = {"medium", "small", "big400"}
+    assert r.wait_seconds("debug", exclude=exclude) == 50  # oldest request + 60 s
+    assert r.wait_seconds("debug") == 0  # another model is usable right now
+    assert r.wait_seconds("debug", exclude=exclude | {"fast70"}) is None
+
+
 # --- agent + router together (F15) ---
 
 def run_agent(settings, fakes, **router_kw):
     from ferrule.agent import Agent
     from ferrule.events import ScriptedApprover
     rp = RoutedProvider(Router(REG, KEYS, **router_kw), "debug",
-                        make_provider=lambda m, p: fakes[m.name])
+                        make_provider=lambda m, p: fakes[m.name], max_wait_s=0)
     events = []
     agent = Agent(rp, settings.model_copy(update={"supports_tools": False}),
                   ScriptedApprover(default=True), events.append)
@@ -323,3 +369,32 @@ def test_keys_never_in_logs():
     chat(rp)
     text = repr(events) + repr(audit.lines) + repr(rp._client(rp.current))
     assert "fast-secret-value" not in text and "big-secret-value" not in text
+
+
+def test_dropped_params_are_not_sent_to_that_provider():
+    # Seen in eval: Gemini rejects "seed" with HTTP 400.
+    reg = REG.model_copy(deep=True)
+    reg.providers["bighost"].drop_params = ["seed"]
+    rp = RoutedProvider(Router(reg, KEYS), "debug", params={"seed": 42, "temperature": 0})
+    big = next(m for m in reg.models if m.name == "big400")
+    medium = next(m for m in reg.models if m.name == "medium")
+    assert rp._default_provider(big, reg.providers["bighost"]).params == {"temperature": 0}
+    assert rp._default_provider(medium, reg.providers["ollama"]).params == {
+        "seed": 42, "temperature": 0}
+
+
+def test_wait_budget_covers_the_whole_call():
+    # Seen in eval: wait 60 s, fall back, wait 60 s again... until the 5-minute model timeout.
+    clock = Clock()
+    slept = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+        clock.t += seconds
+
+    router = Router(REG, KEYS, local_only=True, clock=clock, cooldown_s=50)
+    rp, _, _ = routed({"medium": Fake("medium", [RateLimited("429")])}, router=router,
+                      max_wait_s=120, sleep=fake_sleep)
+    with pytest.raises(NoModelAvailable):
+        chat(rp)
+    assert sum(slept) <= 120

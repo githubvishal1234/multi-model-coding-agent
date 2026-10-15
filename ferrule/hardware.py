@@ -83,11 +83,18 @@ class Selection:
 
 
 def select_local(models: list[ModelSpec], hw: Hardware, installed: set[str] | None = None,
-                 override: str | None = None, too_slow: set[str] = frozenset()) -> Selection:
-    """Pick the largest local model whose estimated memory fits the budget."""
-    budget = hw.budget_gb()
+                 override: str | None = None, too_slow: set[str] = frozenset(),
+                 loaded_gb: float = 0.0) -> Selection:
+    """Pick the largest local model whose estimated memory fits the budget.
+
+    loaded_gb: memory Ollama already holds for loaded models. It is not "free", but Ollama
+    gives it back when it switches models, so it counts toward the budget. Without this, the
+    model currently in use would stop "fitting" as soon as it was loaded (seen in an eval run).
+    """
+    budget = round(BUDGET_FRACTION * (hw.ram_free_gb + hw.vram_free_gb + loaded_gb), 1)
+    held = f" + {loaded_gb} GB held by loaded Ollama models" if loaded_gb else ""
     lines = [f"budget: {BUDGET_FRACTION:.0%} of (free RAM {hw.ram_free_gb} GB + free VRAM "
-             f"{hw.vram_free_gb} GB) = {budget} GB"]
+             f"{hw.vram_free_gb} GB{held}) = {budget} GB"]
     fitting = []
     for m in sorted(models, key=lambda m: m.params_b or 0, reverse=True):
         est = estimate_gb(m)

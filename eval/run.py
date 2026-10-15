@@ -70,6 +70,8 @@ class Row(BaseModel):
     failure_reason: str
     # Not in results.csv; written to transcripts/<task>.json so failures can be diagnosed.
     messages: list[dict] = Field(default_factory=list, exclude=True)
+    events: list[dict] = Field(default_factory=list, exclude=True)
+    agent_answer: str = Field("", exclude=True)  # full stop message (failure_reason is cut)
     check_output: str = Field("", exclude=True)
 
 
@@ -85,9 +87,17 @@ def expand(argv: list[str]) -> list[str]:
 def ferrule_agent(cfg: EvalConfig) -> AgentFn:
     async def run(task: Task, settings: Settings) -> RunResult:
         provider = await build_provider(settings, task.instruction, cfg.params)
+        events: list[dict] = []
+
+        def keep(e) -> None:  # routing decisions etc. go into the transcript
+            if e.kind in ("routing", "notice", "error", "stopped"):
+                events.append({"kind": e.kind, **e.data})
+
         try:
-            agent = Agent(provider, settings, ScriptedApprover(default=True))
-            return await agent.run(task.instruction)
+            agent = Agent(provider, settings, ScriptedApprover(default=True), keep)
+            result = await agent.run(task.instruction)
+            result.events = events
+            return result
         finally:
             await provider.aclose()
     return run
@@ -159,7 +169,8 @@ async def run_task(task: Task, agent: AgentFn, cfg: EvalConfig) -> Row:
                agent_status=result.status, steps=result.steps, seconds=seconds,
                prompt_tokens=result.usage.get("prompt_tokens"),
                completion_tokens=result.usage.get("completion_tokens"),
-               failure_reason=reason, messages=result.messages, check_output=check_output)
+               failure_reason=reason, messages=result.messages, check_output=check_output,
+               events=result.events, agent_answer=result.answer)
 
 
 # --- metadata and reports ---
@@ -246,6 +257,7 @@ def write_reports(out_dir: Path, meta: dict, rows: list[Row]) -> Path:
     transcripts.mkdir(exist_ok=True)
     for r in rows:
         record = {"task": r.task, "passed": r.passed, "agent_status": r.agent_status,
+                  "model": r.model, "agent_answer": r.agent_answer, "events": r.events,
                   "check_output": r.check_output, "messages": r.messages}
         text = json.dumps(record, indent=2).replace(getpass.getuser(), "<user>")  # local paths
         (transcripts / f"{r.task}.json").write_text(text, encoding="utf-8")
