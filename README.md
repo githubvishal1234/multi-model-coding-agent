@@ -11,7 +11,7 @@ Ferrule is a local coding agent that runs on **free models**, either local throu
 | 1–2 | Requirements, architecture, plan ([docs/](docs/)) | done |
 | 3 | Agent core, tools, safety layer, CLI | done |
 | 4 | Evaluation harness ([eval/](eval/)) | done; task set being written |
-| 5 | Model router, hardware-aware model selection, hosted providers | next |
+| 5 | Model router, hardware-aware model selection, hosted providers | done; hosted comparison needs API keys |
 | 6 | Web lookup tool | planned |
 | 7 | Local FastAPI service with streaming | planned |
 | 8 | VS Code extension | planned |
@@ -28,6 +28,8 @@ python -m venv .venv
 .venv/Scripts/python -m ferrule run "Add a docstring to foo() in calc.py" --workspace path/to/project
 ```
 
+- `ferrule doctor` shows your hardware, picks the largest local model that fits, measures its speed, and checks which hosted providers are configured.
+- By default a router picks the model for each task: local first, escalating to free hosted models (if their API keys are set) when the local one keeps failing. Use `--local-only` to keep code on your machine, or `--model NAME` to fix one model.
 - `ferrule plan "..."` proposes numbered steps and runs nothing until you approve them.
 - `ferrule undo` restores the files changed by the last run.
 - Add `--no-native-tools` for models without function calling.

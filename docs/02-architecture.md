@@ -222,6 +222,14 @@ Hosted rate limits in the example are placeholders that must be checked against 
 6. **Notice (N6).** Before the first call to a non-local provider in a session, send a `notice` event naming the provider.
 7. **Log (F17).** Every decision is recorded: `{class, candidates, chosen, reason}`, sent as a `routing` event and written to the audit log.
 
+**As built in Phase 5** (`ferrule/router.py`, `ferrule/registry.py`, `ferrule/models.yaml`):
+- **Profiles.** `balanced` is the default: local models first, then hosted, so it's free and private unless escalation is needed. `quality` puts the strongest models first. `fast` puts the smallest local model first.
+- **Local registry entries are coding models only.** Until eval scores exist the ranking signal is size, and a bigger general model (llama3.1, 8B) would otherwise outrank a smaller coding model.
+- **Native tool calls narrow the candidates.** In native mode, models without native tool calling are excluded, so a run never switches tool-call format halfway through.
+- **The router is a `Provider`.** `RoutedProvider` plugs into the unchanged agent. The agent calls `escalate()` after repeated invalid tool calls or after tests fail twice in a row. Provider errors cause a fallback inside `chat()`: 429s and outages cool the provider down for 60 s, and a hard error such as an unknown model id marks that model as failed.
+- **Caps live in memory.** Daily caps reset when the process restarts.
+- **`ferrule doctor` checks hosted model ids.** It lists each hosted provider's models through `GET /models`, because free-tier model ids change.
+
 ## 7. Hardware selector
 
 - **Detect (F19):**

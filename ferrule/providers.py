@@ -66,6 +66,18 @@ class OpenAICompatProvider:
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    async def available_models(self) -> set[str]:
+        """Model ids the provider serves right now (GET /models). Free-tier ids change often."""
+        try:
+            resp = await self._client.get(f"{self.base_url}/models", headers=self._headers)
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            raise Unavailable(f"{self.name}: {type(e).__name__}: {e}") from e
+        if resp.status_code != 200:
+            raise _status_error(resp.status_code, resp.text[:300])
+        # Some providers prefix ids (e.g. "models/gemini-..."); keep both forms.
+        ids = {m.get("id", "") for m in resp.json().get("data", [])}
+        return ids | {i.split("/", 1)[1] for i in ids if i.startswith("models/")}
+
     async def chat(self, messages, tools=None, on_token=None) -> Reply:
         body = {**self.params, "model": self.model, "messages": messages, "stream": True,
                 "stream_options": {"include_usage": True}}
@@ -80,6 +92,52 @@ class OpenAICompatProvider:
                 return await _read_stream(resp, on_token)
         except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as e:
             raise Unavailable(f"{self.name}: {type(e).__name__}: {e}") from e
+
+
+SPEED_PROMPT = "Write a Python function that returns the n-th Fibonacci number."
+
+
+class OllamaAdmin:
+    """Ollama's native API, for what the OpenAI-compatible endpoint lacks: model list,
+    pull, and generation timings for the speed test."""
+
+    def __init__(self, base_url: str = "http://127.0.0.1:11434",
+                 client: httpx.AsyncClient | None = None, timeout: float = 600):
+        self.base_url = base_url.rstrip("/").removesuffix("/v1")
+        self._client = client or httpx.AsyncClient(timeout=timeout)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def _post(self, path: str, body: dict) -> dict:
+        try:
+            resp = await self._client.post(self.base_url + path, json=body)
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            raise Unavailable(f"ollama: {type(e).__name__}: {e}") from e
+        if resp.status_code != 200:
+            raise _status_error(resp.status_code, resp.text[:300])
+        return resp.json()
+
+    async def installed(self) -> set[str]:
+        try:
+            resp = await self._client.get(self.base_url + "/api/tags")
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            raise Unavailable(f"ollama: {type(e).__name__}: {e}") from e
+        return {m["name"] for m in resp.json().get("models", [])}
+
+    async def pull(self, name: str) -> None:
+        """Download a model. Callers must get the user's confirmation first."""
+        await self._post("/api/pull", {"model": name, "stream": False})
+
+    async def tokens_per_second(self, name: str, num_predict: int = 64) -> float:
+        """Generate a short reply and compute decode speed from Ollama's own timings."""
+        data = await self._post("/api/generate", {
+            "model": name, "prompt": SPEED_PROMPT, "stream": False,
+            "options": {"num_predict": num_predict, "temperature": 0}})
+        count, duration_ns = data.get("eval_count", 0), data.get("eval_duration", 0)
+        if not count or not duration_ns:
+            raise BadResponse(f"ollama returned no timings for {name}")
+        return round(count / (duration_ns / 1e9), 1)
 
 
 async def _read_stream(resp: httpx.Response, on_token) -> Reply:

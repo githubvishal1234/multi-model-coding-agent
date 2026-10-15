@@ -76,6 +76,20 @@ def test_connection_refused_is_unavailable():
         chat(make(handler))
 
 
+def test_available_models_lists_ids():
+    def handler(req):
+        assert req.url.path == "/v1/models" and req.headers["authorization"] == "Bearer k"
+        return httpx.Response(200, json={"data": [{"id": "llama-x"}, {"id": "models/gemini-y"}]})
+
+    ids = asyncio.run(make(handler, api_key="k").available_models())
+    assert {"llama-x", "models/gemini-y", "gemini-y"} <= ids
+
+
+def test_available_models_auth_error():
+    with pytest.raises(BadResponse):
+        asyncio.run(make(lambda req: httpx.Response(401, text="bad key")).available_models())
+
+
 def test_garbage_stream_is_bad_response():
     with pytest.raises(BadResponse):
         chat(make(lambda req: httpx.Response(200, content=b"data: {not json\n\n")))

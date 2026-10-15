@@ -1,0 +1,47 @@
+# Model registry. Override the path with FERRULE_REGISTRY.
+#
+# Rules:
+# - API keys never go here: `api_key_env` names the environment variable that holds the key.
+#   A hosted provider without its key set is skipped.
+# - `scores` are written ONLY by the eval harness (success rate per task class). Never guess them.
+# - Free-tier model ids and rate limits change often. The hosted entries below were current
+#   examples when written; run `ferrule doctor` to see which ids each provider really serves,
+#   and check each provider's docs for current limits before relying on the caps.
+
+providers:
+  ollama:
+    base_url: http://127.0.0.1:11434/v1
+    local: true
+  groq:
+    base_url: https://api.groq.com/openai/v1
+    api_key_env: GROQ_API_KEY
+    caps: {requests_per_minute: 30, requests_per_day: 1000}     # verify current free-tier limits
+  cerebras:
+    base_url: https://api.cerebras.ai/v1
+    api_key_env: CEREBRAS_API_KEY
+    caps: {requests_per_minute: 30, requests_per_day: 1000}     # verify
+  gemini:
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    api_key_env: GEMINI_API_KEY
+    caps: {requests_per_minute: 10, requests_per_day: 250}      # verify
+  openrouter:
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    caps: {requests_per_minute: 20, requests_per_day: 50}       # verify
+
+# params_b: billions of parameters (null if not published). Used for the memory estimate of
+# local models and, until eval scores exist, as the ranking signal ("bigger is stronger").
+models:
+  # --- local (Ollama). Sizes from the Ollama library pages. Coding models only: size is the
+  # ranking signal until eval scores exist, and a bigger general model (e.g. llama3.1) would
+  # outrank a smaller coding model. Add other installed models here to let the router use them.
+  - {name: "qwen2.5-coder:1.5b", provider: ollama, params_b: 1.5, context: 32768, supports_tools: true}
+  - {name: "qwen2.5-coder:3b", provider: ollama, params_b: 3.1, context: 32768, supports_tools: true}
+  - {name: "deepseek-coder:6.7b", provider: ollama, params_b: 6.7, context: 16384, supports_tools: false}
+  - {name: "qwen2.5-coder:7b", provider: ollama, params_b: 7.6, context: 32768, supports_tools: true}
+  - {name: "qwen2.5-coder:14b", provider: ollama, params_b: 14.8, context: 32768, supports_tools: true}
+  # --- hosted free tiers (verify ids with `ferrule doctor`) ---
+  - {name: "llama-3.3-70b-versatile", provider: groq, params_b: 70, context: 131072, supports_tools: true}
+  - {name: "llama-3.3-70b", provider: cerebras, params_b: 70, context: 65536, supports_tools: true}
+  - {name: "gemini-2.5-flash", provider: gemini, params_b: null, context: 1048576, supports_tools: true}
+  - {name: "qwen/qwen3-coder:free", provider: openrouter, params_b: 480, context: 262144, supports_tools: true}

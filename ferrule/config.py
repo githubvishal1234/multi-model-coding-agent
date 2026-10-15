@@ -22,8 +22,12 @@ class Settings(BaseModel):
     workspace: Path = Field(default_factory=Path.cwd)
     home: Path = Field(default_factory=lambda: Path.home() / ".ferrule")
     base_url: str = "http://127.0.0.1:11434/v1"
-    model: str = "qwen2.5-coder:7b"
+    model: str | None = None  # a fixed Ollama model; None = let the router choose
     supports_tools: bool = True
+    local_only: bool = False  # never send code to hosted providers
+    profile: Literal["fast", "balanced", "quality"] = "balanced"
+    max_hosted_requests: int = Field(50, ge=0)  # per run
+    min_tokens_per_sec: float = Field(4.0, gt=0)  # starting guess; tune after `ferrule doctor`
     max_steps: int = Field(20, ge=1)
     max_invalid: int = Field(3, ge=0)
     model_timeout: float = Field(300, gt=0)

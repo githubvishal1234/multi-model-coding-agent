@@ -1,0 +1,16 @@
+# python -m eval.run --config eval/configs/router.yaml
+# The router picks the model per task and escalates on failure. Hosted providers are used only
+# when their API keys are set (see .env.example); otherwise this is local-only routing.
+name: router
+tasks: ["../tasks/*/task.yaml"]
+agent: ferrule
+router: true
+local_only: false
+profile: balanced
+supports_tools: true
+max_steps: 15
+model_timeout: 300
+command_timeout: 120
+check_timeout: 120
+params: {temperature: 0, seed: 42}
+output_dir: ../results

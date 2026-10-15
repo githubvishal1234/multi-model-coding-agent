@@ -31,7 +31,8 @@ from eval.tasks import Task, load_tasks
 from ferrule.agent import Agent, RunResult
 from ferrule.config import Settings
 from ferrule.events import ScriptedApprover
-from ferrule.providers import OpenAICompatProvider
+from ferrule.hardware import load_speeds, save_speeds
+from ferrule.router import build_provider
 
 ROOT = Path(__file__).resolve().parent.parent
 CHECK_OUTPUT_CHARS = 600
@@ -42,7 +43,10 @@ class EvalConfig(BaseModel):
     name: str
     tasks: list[str] = Field(min_length=1)  # globs relative to the config file
     agent: Literal["ferrule", "reference", "noop"] = "ferrule"
-    model: str = "qwen2.5-coder:7b"
+    model: str = "qwen2.5-coder:7b"  # used when router is false
+    router: bool = False  # true: let the router pick and escalate (ignores `model`)
+    local_only: bool = False  # router mode: never use hosted providers
+    profile: Literal["fast", "balanced", "quality"] = "balanced"
     base_url: str = "http://127.0.0.1:11434/v1"
     supports_tools: bool = True
     max_steps: int = Field(15, ge=1)
@@ -56,6 +60,7 @@ class EvalConfig(BaseModel):
 class Row(BaseModel):
     task: str
     task_class: str
+    model: str = ""  # the model in use when the agent stopped
     passed: bool
     agent_status: str
     steps: int
@@ -79,8 +84,7 @@ def expand(argv: list[str]) -> list[str]:
 
 def ferrule_agent(cfg: EvalConfig) -> AgentFn:
     async def run(task: Task, settings: Settings) -> RunResult:
-        provider = OpenAICompatProvider(cfg.base_url, cfg.model, timeout=cfg.model_timeout,
-                                        params={"max_tokens": settings.max_tokens, **cfg.params})
+        provider = await build_provider(settings, task.instruction, cfg.params)
         try:
             agent = Agent(provider, settings, ScriptedApprover(default=True))
             return await agent.run(task.instruction)
@@ -128,11 +132,15 @@ async def run_task(task: Task, agent: AgentFn, cfg: EvalConfig) -> Row:
         workspace = Path(tmp) / "repo"
         shutil.copytree(task.path(task.repo), workspace)
         settings = Settings(
-            workspace=workspace, home=Path(tmp) / "home", model=cfg.model,
+            workspace=workspace, home=Path(tmp) / "home",
+            model=None if cfg.router else cfg.model, base_url=cfg.base_url,
+            local_only=cfg.local_only, profile=cfg.profile,
             supports_tools=cfg.supports_tools, max_steps=task.max_steps or cfg.max_steps,
             model_timeout=cfg.model_timeout, command_timeout=cfg.command_timeout,
             test_command=expand(task.test_command),
         )
+        if cfg.router:  # reuse speeds measured by `ferrule doctor`
+            save_speeds(settings.home, load_speeds(Settings().home))
         start = time.perf_counter()
         try:
             result = await agent(task, settings)
@@ -147,7 +155,7 @@ async def run_task(task: Task, agent: AgentFn, cfg: EvalConfig) -> Row:
         reason = f"agent {result.status}: {' '.join(result.answer.split())[:250]}"
     else:  # the end of test output holds the summary, so keep the tail
         reason = f"check failed: ...{' '.join(check_output.split())[-250:]}"
-    return Row(task=task.id, task_class=task.task_class, passed=passed,
+    return Row(task=task.id, task_class=task.task_class, model=result.model, passed=passed,
                agent_status=result.status, steps=result.steps, seconds=seconds,
                prompt_tokens=result.usage.get("prompt_tokens"),
                completion_tokens=result.usage.get("completion_tokens"),
@@ -165,8 +173,9 @@ def _git(*args: str) -> str | None:
 
 
 def model_digest(cfg: EvalConfig) -> str | None:
-    """Ollama digest of the model, so results name the exact weights. None if unknown."""
-    if cfg.agent != "ferrule":
+    """Ollama digest of the model, so results name the exact weights. None if unknown.
+    Router runs use several models; the per-row `model` column says which one finished."""
+    if cfg.agent != "ferrule" or cfg.router:
         return None
     try:
         tags = httpx.get(cfg.base_url.removesuffix("/v1") + "/api/tags", timeout=5).json()
@@ -186,7 +195,7 @@ def metadata(cfg: EvalConfig, tasks: list[Task]) -> dict:
         "config_hash": hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:12],
         "config": config,
         "agent": cfg.agent,
-        "model": cfg.model if cfg.agent == "ferrule" else None,
+        "model": ("router" if cfg.router else cfg.model) if cfg.agent == "ferrule" else None,
         "model_digest": model_digest(cfg),
         "tasks": [t.id for t in tasks],
         "code_commit": _git("rev-parse", "HEAD"),

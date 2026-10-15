@@ -162,6 +162,7 @@ class RunResult:
     steps: int = 0
     usage: dict = field(default_factory=dict)
     messages: list[dict] = field(default_factory=list)  # full conversation, for eval transcripts
+    model: str = ""  # the model in use when the run ended (the router may have switched)
 
 
 class Agent:
@@ -175,6 +176,17 @@ class Agent:
         self.ctx = ToolContext(settings, approver, audit)
         self.usage: dict[str, int] = {}
         self.messages: list[dict] = []
+        attach = getattr(provider, "attach", None)  # a RoutedProvider logs routing decisions
+        if attach:
+            attach(self.emit, self.ctx.audit)
+
+    def _escalate(self, why: str) -> bool:
+        """Ask the provider for a stronger model, if it can switch (RoutedProvider)."""
+        escalate = getattr(self.provider, "escalate", None)
+        if escalate and escalate(why):
+            self.emit(Event("notice", {"message": f"switched to {self.provider.model}: {why}"}))
+            return True
+        return False
 
     async def run(self, task: str, plan: bool = False) -> RunResult:
         self.ctx.audit.write("run_start", task=task, model=self.provider.model, plan=plan)
@@ -189,6 +201,10 @@ class Agent:
                 save_checkpoint(self.settings, self.ctx.originals)
         self.ctx.audit.write("run_end", status=result.status, steps=result.steps)
         result.messages = self.messages
+        try:
+            result.model = self.provider.model
+        except ProviderError:  # a router with no usable model left
+            result.model = ""
         return result
 
     async def _chat(self, messages: list[dict], tools: list[dict] | None) -> Reply:
@@ -239,6 +255,7 @@ class Agent:
         messages.append({"role": "user", "content": task})
         schemas = [t.schema() for t in self.tools.values()] if native else None
         invalid = 0
+        test_failures = 0  # consecutive failing run_tests results
         untested = False  # files changed since the last test run
         nudged: set[str] = set()
         for step in range(1, s.max_steps + 1):
@@ -250,7 +267,9 @@ class Agent:
                 invalid += 1
                 self.emit(Event("error", {"message": str(e)}))
                 if invalid > s.max_invalid:
-                    return self._stop("invalid_output", f"invalid tool call: {e}", step)
+                    if not self._escalate(f"{invalid} invalid tool calls in a row"):
+                        return self._stop("invalid_output", f"invalid tool call: {e}", step)
+                    invalid = 0
                 # No dangling tool_calls in history: strict APIs reject them without tool replies.
                 messages.append({"role": "assistant", "content": reply.content or "(tool call)"})
                 messages.append({"role": "user",
@@ -292,6 +311,9 @@ class Agent:
                     untested = True
                 elif call.name in TEST_TOOLS:
                     untested = False
+                    test_failures = 0 if result.ok else test_failures + 1
+                    if test_failures >= 2 and self._escalate("tests failed twice in a row"):
+                        test_failures = 0
                 text = result.output if result.ok else f"ERROR: {result.error}\n{result.output}"
                 if native:
                     messages.append({"role": "tool", "tool_call_id": call.id, "content": text})
