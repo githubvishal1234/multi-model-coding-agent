@@ -1,0 +1,10 @@
+id: test_parse_duration
+class: tests
+instruction: >-
+  Write pytest tests for parse_duration() from duration.py in a new file
+  test_duration.py. Cover single units, combined units like "2h5m10s", and invalid
+  input that must raise ValueError.
+check:
+  command: ["{python}", "check_tests.py"]
+  files: check
+solution: solution

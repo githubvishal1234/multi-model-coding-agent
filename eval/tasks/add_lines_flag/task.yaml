@@ -1,0 +1,10 @@
+id: add_lines_flag
+class: boilerplate
+instruction: >-
+  Add a --lines option (short form -l) to wordcount.py. When it is given, print a second
+  line "<n> lines" after the word count, where n is the number of lines as counted by
+  str.splitlines(). Without the option the output must stay exactly the same.
+check:
+  command: ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+  files: check
+solution: solution

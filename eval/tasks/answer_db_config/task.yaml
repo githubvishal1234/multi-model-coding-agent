@@ -1,0 +1,10 @@
+id: answer_db_config
+class: explain
+instruction: >-
+  Which function does the app use to decide its database URL, which environment
+  variable overrides it, and what is the default value? Write the answer to ANSWER.md
+  in the repository root. Do not change any code.
+check:
+  command: ["{python}", "check_answer.py"]
+  files: check
+solution: solution
