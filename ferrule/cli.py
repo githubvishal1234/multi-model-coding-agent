@@ -58,6 +58,9 @@ def main(argv: list[str] | None = None) -> int:
         max_steps=getattr(args, "max_steps", None),
         supports_tools=False if getattr(args, "no_native_tools", False) else None,
     )
+    if not settings.workspace.is_dir():
+        print(f"error: workspace folder does not exist: {settings.workspace}", file=sys.stderr)
+        return 2
     if args.command == "undo":
         restored = undo(settings)
         print("\n".join(f"restored {f}" for f in restored) or "nothing to undo")
