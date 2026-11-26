@@ -1,0 +1,4 @@
+task,task_class,model,passed,agent_status,steps,seconds,prompt_tokens,completion_tokens,failure_reason
+add_lines_flag,boilerplate,openai/gpt-oss-120b,True,done,15,137.85,17293,1268,
+docstring_area,small_edit,openai/gpt-oss-120b,True,done,6,10.96,5589,706,
+fix_median,debug,openai/gpt-oss-120b,True,done,5,70.29,5094,325,

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from ferrule.config import Settings
 from ferrule.events import ApprovalRequest, Approver, Emit, Event
 from ferrule.providers import Provider, ProviderError, Reply
-from ferrule.safety import AuditLog, Redactor
+from ferrule.safety import PRIVATE_START, AuditLog, Redactor
 from ferrule.tools import (
     InvalidToolCall,
     Tool,
@@ -20,6 +20,7 @@ from ferrule.tools import (
     run_tool,
     validate,
 )
+from ferrule.tools.files import list_files_text
 from ferrule.undo import save_checkpoint
 
 SYSTEM = """You are Ferrule, a coding agent working in the repository at {workspace}.
@@ -63,6 +64,9 @@ NUDGE_EXAMPLES = {
     "untested": '{"tool": "run_tests", "args": {}}',
     "failing": '{"tool": "read_file", "args": {"path": "<file the failure points to>"}}',
 }
+NUDGE_EMPTY = ("Your reply was empty. Call a tool to continue the task, or reply with your "
+               "final answer.")
+FILE_LIST_LIMIT = 100  # paths sent with the task; list_files shows more
 TEST_TOOLS = {"run_tests"}
 WRITE_TOOLS = {"write_file", "edit_file"}
 
@@ -175,7 +179,12 @@ class Agent:
         self.provider = provider
         self.settings = settings
         self.emit = emit
-        self.tools = tools if tools is not None else default_tools()
+        if tools is None:
+            tools = default_tools()
+            if settings.databases:
+                from ferrule.tools.db import db_tools
+                tools.update(db_tools())
+        self.tools = tools
         audit = AuditLog(settings.home / "audit.log", Redactor())
         self.ctx = ToolContext(settings, approver, audit)
         self.usage: dict[str, int] = {}
@@ -256,9 +265,18 @@ class Agent:
                 return self._stop("plan_rejected", "the user rejected the plan")
             task = f"{task}\n\nApproved plan:\n{reply.content}"
 
-        messages.append({"role": "user", "content": task})
+        # Seen in eval: without a file list, models burn steps on refused `ls`/`git ls-files`.
+        files = list_files_text(s.workspace, limit=FILE_LIST_LIMIT)
+        content = f"{task}\n\nFiles in the workspace:\n{files}"
+        if s.databases:
+            writable = {d.lower() for d in s.db_writable}
+            content += "\n\nDatabases (use db_schema and run_sql): " + ", ".join(
+                f"{n} ({'writable' if n in writable else 'read-only'})"
+                for n in sorted(s.databases))
+        messages.append({"role": "user", "content": content})
         schemas = [t.schema() for t in self.tools.values()] if native else None
         invalid = 0
+        empty = 0  # consecutive empty replies (no text, no tool call)
         test_failures = 0  # consecutive failing run_tests results
         last_tests_ok: bool | None = None  # outcome of the most recent run_tests
         untested = False  # files changed since the last test run
@@ -281,6 +299,17 @@ class Agent:
                                  "content": f"Error: {e}\nFix the tool call and try again."})
                 continue
             invalid = 0
+
+            if not calls and not reply.content.strip():
+                # Seen from gpt-oss-120b on Groq: an empty reply ended runs that had done nothing.
+                empty += 1
+                if empty > s.max_invalid:
+                    return self._stop("invalid_output", "the model kept replying with nothing",
+                                      step)
+                messages.append({"role": "assistant", "content": "(empty reply)"})
+                messages.append({"role": "user", "content": NUDGE_EMPTY})
+                continue
+            empty = 0
 
             if not calls:
                 messages.append({"role": "assistant", "content": reply.content})
@@ -325,6 +354,12 @@ class Agent:
                     if test_failures >= 2 and self._escalate("tests failed twice in a row"):
                         test_failures = 0
                 text = result.output if result.ok else f"ERROR: {result.error}\n{result.output}"
+                if PRIVATE_START in text and self.provider.is_local:
+                    # A local model has now seen database values and may repeat them in its
+                    # own replies, which are not marked: keep the rest of this run local.
+                    keep_local = getattr(self.provider, "keep_local", None)
+                    if keep_local:
+                        keep_local()
                 if native:
                     messages.append({"role": "tool", "tool_call_id": call.id, "content": text})
                 else:

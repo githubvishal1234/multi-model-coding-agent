@@ -3,11 +3,12 @@
 import asyncio
 import shutil
 import subprocess
+from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from ferrule.events import ApprovalRequest
-from ferrule.safety import check_command
+from ferrule.safety import check_command, mark_private
 from ferrule.tools import Tool, ToolContext, ToolResult
 
 # Auto-approved in approval="auto_safe" mode. Fixed here, not configurable, on purpose.
@@ -27,6 +28,14 @@ def _run(argv: list[str], cwd, timeout: float) -> ToolResult:
                       error=None if ok else f"exit code {proc.returncode}")
 
 
+def _workspace_module(argv: list[str], s) -> str | None:
+    """'mod' for `python -m mod` when mod.py (or package mod/) is in the workspace."""
+    if len(argv) < 3 or argv[0].lower().removesuffix(".exe") != "python" or argv[1] != "-m":
+        return None
+    base = Path(s.workspace, *argv[2].split("."))
+    return argv[2] if base.with_suffix(".py").is_file() or base.is_dir() else None
+
+
 class RunCommand(Tool):
     name = "run_command"
     description = ("Run an allowlisted program in the workspace, given as an argv list, e.g. "
@@ -43,9 +52,19 @@ class RunCommand(Tool):
             return ToolResult(ok=False, error=f"'{prog}' was not found on PATH")
         auto = s.approval == "auto_safe" and (prog, *a.argv[1:2]) in SAFE_COMMANDS
         cmd = " ".join(a.argv)
-        if not auto and not await ctx.approve(ApprovalRequest("run_command", f"run: {cmd}")):
+        script = _workspace_module(a.argv, s)
+        private = script and s.databases and not s.db_rows_to_hosted
+        note = " (its output is kept from hosted models)" if private else ""
+        if not auto and not await ctx.approve(ApprovalRequest("run_command",
+                                                              f"run: {cmd}{note}")):
             return ToolResult(ok=False, error="the user rejected this command")
-        return await asyncio.to_thread(_run, [exe, *a.argv[1:]], s.workspace, s.command_timeout)
+        result = await asyncio.to_thread(_run, [exe, *a.argv[1:]], s.workspace,
+                                         s.command_timeout)
+        if private:
+            # A script in the workspace can print data rows, which must not reach a hosted
+            # model any more than run_sql rows do (seen in the big-data tests).
+            result.output = mark_private(result.output, f"output of python -m {script}")
+        return result
 
 
 class RunTests(Tool):

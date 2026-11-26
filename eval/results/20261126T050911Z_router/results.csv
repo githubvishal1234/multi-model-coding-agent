@@ -1,0 +1,2 @@
+task,task_class,model,passed,agent_status,steps,seconds,prompt_tokens,completion_tokens,failure_reason
+add_version_route,boilerplate,openai/gpt-oss-120b,False,provider_error,0,69.94,4721,424,agent provider_error: no usable model for boilerplate (qwen2.5-coder:1.5b: not installed; qwen2.5-coder:3b: not installed; deepseek-coder:6.7b: no native tool calling; qwen2.5-coder:7b: not installed; qwen2.5-coder:14b: not installed; openai/gpt-oss-120b: groq cooling dow

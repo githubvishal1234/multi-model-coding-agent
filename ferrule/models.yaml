@@ -42,11 +42,14 @@ models:
   - {name: "qwen2.5-coder:7b", provider: ollama, params_b: 7.6, context: 32768, supports_tools: true}
   - {name: "qwen2.5-coder:14b", provider: ollama, params_b: 14.8, context: 32768, supports_tools: true}
   # --- hosted free tiers (verify ids with `ferrule doctor`) ---
-  - {name: "llama-3.3-70b-versatile", provider: groq, params_b: 70, context: 131072, supports_tools: true}
+  # Groq production ids checked against console.groq.com/docs/models on 2026-11-26.
+  # gpt-oss-120b is mixture-of-experts; params_b is the total size.
+  # llama-3.3-70b-versatile is listed in the docs but returned 404 model_not_found for this
+  # account (2026-11-26), so it is left out.
+  - {name: "openai/gpt-oss-120b", provider: groq, params_b: 120, context: 131072, supports_tools: true}
   - {name: "llama-3.3-70b", provider: cerebras, params_b: 70, context: 65536, supports_tools: true}
   # gemini-2.5-flash is listed by /models but returns 404 "no longer available to new users"
   # (2026-10-15); Google's error message points to gemini-3.8-flash.
   - {name: "gemini-3.8-flash", provider: gemini, params_b: null, context: 1048576, supports_tools: true}
-  # OpenRouter free models change often; checked against its public /models list on 2026-10-15.
-  # params_b is the total size for mixture-of-experts models (laguna-s-2.1: 8B active).
-  - {name: "poolside/laguna-s-2.1:free", provider: openrouter, params_b: 118, context: 262144, supports_tools: true}
+  # OpenRouter free models change often. poolside/laguna-s-2.1:free was removed on 2026-11-26
+  # (HTTP 404 "no longer available"); add a current free model id here to use OpenRouter.

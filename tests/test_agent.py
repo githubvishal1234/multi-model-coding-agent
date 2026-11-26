@@ -92,6 +92,30 @@ def test_loop_runs_tools_until_done(settings, ws):  # F9
     assert result.messages[-1] == {"role": "assistant", "content": "Created b.txt."}
 
 
+def test_task_message_lists_workspace_files(settings, ws):
+    (ws / "app.py").write_text("x = 1\n")
+    (ws / ".env").write_text("KEY=1")
+    provider = MockProvider(Reply(content="Nothing to do."))
+    run(provider, settings, task="add a route")
+    first = provider.calls[0]["messages"][1]["content"]
+    assert first.startswith("add a route") and "app.py" in first and ".env" not in first
+
+
+def test_empty_replies_are_retried_then_stop(settings):
+    provider = MockProvider(Reply(content="  "))
+    result, _ = run(provider, settings, max_invalid=2)
+    assert result.status == "invalid_output" and len(provider.calls) == 3
+    assert provider.calls[1]["messages"][-1]["content"].startswith("Your reply was empty")
+
+
+def test_empty_reply_then_work_continues(settings, ws):
+    (ws / "a.txt").write_text("hi")
+    provider = MockProvider(Reply(), tool_reply("write_file", path="a.txt", content="yo"),
+                            tool_reply("run_tests"), Reply(content="Done."))
+    result, _ = run(provider, settings)
+    assert result.status == "done" and (ws / "a.txt").read_text() == "yo"
+
+
 # --- finish checks: one nudge each before a final answer is accepted ---
 
 def notices(events):

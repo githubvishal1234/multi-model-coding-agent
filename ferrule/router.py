@@ -14,6 +14,7 @@ from collections import deque
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from ferrule.events import Event
 from ferrule.providers import (
@@ -26,9 +27,43 @@ from ferrule.providers import (
     Unavailable,
 )
 from ferrule.registry import ModelSpec, ProviderSpec, Registry
+from ferrule.safety import withhold_private
 
-COOLING = "cooling down after an error"
+COOLING = "cooling down"
 MINUTE_CAP = "per-minute cap reached"
+# "Please try again in 5m17.52s" (Groq; other OpenAI-compatible APIs use the same wording)
+RETRY_RE = re.compile(r"try again in ((?:[\d.]+\s*(?:ms|h|m|s)\s*)+)", re.IGNORECASE)
+
+
+def retry_after(text: str) -> float | None:
+    """Seconds a provider's error message says to wait, or None if it doesn't say."""
+    m = RETRY_RE.search(text)
+    if not m:
+        return None
+    unit = {"h": 3600, "m": 60, "s": 1, "ms": 0.001}
+    return sum(float(n) * unit[u.lower()]
+               for n, u in re.findall(r"([\d.]+)\s*(ms|h|m|s)", m.group(1), re.IGNORECASE))
+
+
+def limit_note(text: str) -> str:
+    """'daily token limit reached', 'per-minute request limit reached', ... from a 429 body."""
+    t = text.lower()
+    period = ("daily " if "per day" in t or "(tpd)" in t or "(rpd)" in t
+              else "per-minute " if "per minute" in t or "(tpm)" in t or "(rpm)" in t else "")
+    kind = "token " if "token" in t else "request " if "request" in t else ""
+    return f"{period}{kind}limit reached" if period or kind else "rate limit reached"
+
+
+def is_local_url(url: str) -> bool:
+    host = (urlsplit(url).hostname or "").lower()
+    return host in ("localhost", "127.0.0.1", "::1") or host.endswith(".localhost")
+
+
+def duration(seconds: float) -> str:
+    s = max(0, round(seconds))
+    h, rest = divmod(s, 3600)
+    m, sec = divmod(rest, 60)
+    return f"{h}h{m:02d}m" if h else f"{m}m{sec:02d}s" if m else f"{sec}s"
 MAX_WAIT_S = 120  # wait at most this long for a rate-limited model before giving up
 
 TASK_CLASSES = ("boilerplate", "small_edit", "explain", "tests", "debug",
@@ -98,6 +133,7 @@ class Router:
         self.cooldown_s = cooldown_s
         self.clock = clock
         self.cooling: dict[str, float] = {}  # provider -> time it may be used again
+        self.cool_why: dict[str, str] = {}  # provider -> why it is cooling down
         self.failed: set[str] = set()  # model names that returned a hard error
         self.minute: dict[str, deque] = {}  # provider -> request times in the last minute
         # ponytail: daily counts live in memory only (reset on restart); persist if caps matter.
@@ -122,8 +158,10 @@ class Router:
             return "measured too slow"
         if m.name in self.failed:
             return "failed earlier in this session"
-        if self.cooling.get(m.provider, 0) > self.clock():
-            return f"{m.provider} {COOLING}"
+        left = self.cooling.get(m.provider, 0) - self.clock()
+        if left > 0:
+            why = self.cool_why.get(m.provider, "had an error")
+            return f"{m.provider} {why}; {COOLING}, usable again in {duration(left)}"
         cap = self._cap_reason(m.provider, p)
         return cap
 
@@ -175,7 +213,7 @@ class Router:
             reason = self._skip_reason(m, task_class, context_needed)
             if reason is None:
                 return 0.0
-            if reason.endswith(COOLING):
+            if f"; {COOLING}, " in reason:
                 t = self.cooling[m.provider] - now
             elif reason.endswith(MINUTE_CAP):
                 t = self.minute[m.provider][0] + 60 - now
@@ -191,8 +229,12 @@ class Router:
         self.minute.setdefault(m.provider, deque()).append(self.clock())
         self.day[m.provider] = self.day.get(m.provider, 0) + 1
 
-    def cool_down(self, provider: str) -> None:
-        self.cooling[provider] = self.clock() + self.cooldown_s
+    def cool_down(self, provider: str, seconds: float | None = None,
+                  why: str | None = None) -> None:
+        """Skip a provider for `seconds` (what its error said, e.g. Groq's 'try again in
+        5m17s'), never less than cooldown_s. `why` is shown in routing and stop messages."""
+        self.cooling[provider] = self.clock() + max(self.cooldown_s, seconds or 0)
+        self.cool_why[provider] = why or "had an error"
 
     def mark_failed(self, model: str) -> None:
         self.failed.add(model)
@@ -246,8 +288,15 @@ class RoutedProvider:
     def _select(self, reason: str) -> ModelSpec:
         ranked, skipped = self.router.ranked(self.task_class, self.context_needed, self.tried)
         if not ranked:
-            details = "; ".join(f"{k}: {v}" for k, v in skipped.items())
-            raise NoModelAvailable(f"no usable model for {self.task_class} ({details})")
+            # Lead with what a wait would fix (rate limits), then the permanent reasons.
+            temporary = [f"{k}: {v}" for k, v in skipped.items()
+                         if f"; {COOLING}, " in v or v.endswith(MINUTE_CAP)]
+            other = "; ".join(f"{k}: {v}" for k, v in skipped.items()
+                              if f"{k}: {v}" not in temporary)
+            head = f"no usable model for {self.task_class}"
+            if temporary:
+                head += ". Blocked for now: " + "; ".join(temporary)
+            raise NoModelAvailable(f"{head}. Other models: {other}" if other else head)
         self.current = ranked[0]
         self._log("routing", task_class=self.task_class, chosen=self.current.name,
                   provider=self.current.provider, reason=reason,
@@ -283,6 +332,13 @@ class RoutedProvider:
             self.current = previous
             return False
 
+    def keep_local(self) -> None:
+        """No hosted models for the rest of this run (a local model has seen private data)."""
+        if not self.router.local_only:
+            self.router.local_only = True
+            self._log("notice", message="a local model has read database values: hosted "
+                      "models are off for the rest of this run")
+
     async def _select_or_wait(self, reason: str) -> ModelSpec:
         """Like _select, but if every usable model is only rate-limited, wait for one.
         The wait budget (max_wait_s) covers the whole chat() call, not each fallback."""
@@ -315,18 +371,22 @@ class RoutedProvider:
                 self._log("notice", message=f"sending code and prompts to {m.provider} "
                           f"({m.name}); the code leaves this machine")
             sent = messages if local else [
-                {**msg, "content": self.redact(msg["content"])}
+                {**msg, "content": self.redact(withhold_private(msg["content"]))}
                 if isinstance(msg.get("content"), str) else msg for msg in messages]
             self.router.record_request(m)
             try:
                 return await self._client(m).chat(sent, tools, on_token)
             except (RateLimited, Unavailable) as e:  # temporary: cool down, maybe come back
-                self.router.cool_down(m.provider)
+                text = str(e)
+                # Wait as long as the provider says: a daily limit does not clear in 60 s.
+                self.router.cool_down(m.provider, retry_after(text),
+                                      limit_note(text) if isinstance(e, RateLimited) else None)
                 why = f"{m.provider} {type(e).__name__}: {e}"
             except BadResponse as e:  # e.g. the model id no longer exists: never retry it
                 self.router.mark_failed(m.name)
                 why = f"{m.name} error: {e}"
-            await self._select_or_wait(f"fallback after {why[:200]}")
+            # 400: Groq puts "Limit ..., Used ..., try again in ..." past the first 200 chars.
+            await self._select_or_wait(f"fallback after {why[:400]}")
 
     async def aclose(self) -> None:
         for client in self._clients.values():
@@ -368,8 +428,14 @@ async def build_provider(settings, task: str, extra_params: dict | None = None) 
 
     params = {"max_tokens": settings.max_tokens, **(extra_params or {})}
     if settings.model:
-        return OpenAICompatProvider(settings.base_url, settings.model,
-                                    timeout=settings.model_timeout, params=params)
+        # Usually local Ollama. If FERRULE_BASE_URL points elsewhere, apply the same rules as
+        # hosted models in the router: redact secrets, withhold database values.
+        local = is_local_url(settings.base_url)
+        redact = Redactor()
+        return OpenAICompatProvider(
+            settings.base_url, settings.model, timeout=settings.model_timeout, params=params,
+            name="ollama" if local else "custom", is_local=local,
+            outbound=None if local else (lambda s: redact(withhold_private(s))))
     registry = load_registry()
     installed = await installed_models(settings.base_url) or set()
     too_slow = {m for m, tps in load_speeds(settings.home).items()

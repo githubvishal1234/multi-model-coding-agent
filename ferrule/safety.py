@@ -1,4 +1,5 @@
-"""Workspace confinement, secret-file denial, command allowlist, redaction and audit log."""
+"""Workspace confinement, secret-file denial, command allowlist, redaction, SQL read-only check,
+private database values and audit log."""
 
 import fnmatch
 import json
@@ -7,6 +8,7 @@ import re
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 class SafetyError(Exception):
@@ -83,15 +85,31 @@ SECRET_RES = [re.compile(p) for p in (
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
 )]
 SECRET_ENV_HINTS = ("KEY", "TOKEN", "SECRET", "PASSWORD")
+DB_ENV_PREFIX = "FERRULE_DB_"  # FERRULE_DB_<NAME>=<connection URL>
+DB_PASSWORD_RE = re.compile(r"(?:PWD|password)=([^;&]+)", re.IGNORECASE)  # in odbc_connect=...
+
+
+def _db_secrets(url: str) -> set[str]:
+    """The whole connection URL and any password inside it."""
+    found = {url, *DB_PASSWORD_RE.findall(url)}
+    try:
+        found.add(urlsplit(url).password or "")
+    except ValueError:
+        pass
+    return {s for s in found if len(s) >= 4}
 
 
 class Redactor:
-    """Replaces known key formats and the values of secret-looking env vars with [REDACTED]."""
+    """Replaces known key formats, the values of secret-looking env vars and database
+    connection URLs and passwords with [REDACTED]."""
 
     def __init__(self, env: Mapping[str, str] | None = None):
         env = os.environ if env is None else env
         values = {v for k, v in env.items()
                   if len(v) >= 8 and any(h in k.upper() for h in SECRET_ENV_HINTS)}
+        for k, v in env.items():
+            if k.upper().startswith(DB_ENV_PREFIX) and "://" in v:
+                values |= _db_secrets(v)
         self.values = sorted(values, key=len, reverse=True)
 
     def __call__(self, text: str) -> str:
@@ -100,6 +118,52 @@ class Redactor:
         for rx in SECRET_RES:
             text = rx.sub("[REDACTED]", text)
         return text
+
+
+# --- database rows: never sent to hosted models ---
+# Tools wrap row values (and database errors, which can quote them) in these markers.
+# RoutedProvider replaces marked text before any message goes to a hosted provider.
+PRIVATE_START = "<<ferrule-private:"
+PRIVATE_END = "<<ferrule-private-end>>"
+# No end marker = cut off by output truncation: withhold to the end of the text.
+PRIVATE_RE = re.compile(re.escape(PRIVATE_START) + r"([^>]*)>>.*?(?:" + re.escape(PRIVATE_END)
+                        + r"|\Z)", re.DOTALL)
+
+
+def mark_private(text: str, label: str) -> str:
+    return f"{PRIVATE_START}{label}>>\n{text}\n{PRIVATE_END}"
+
+
+def withhold_private(text: str) -> str:
+    return PRIVATE_RE.sub(lambda m: f"[{m.group(1)} withheld: database values are only sent "
+                                    "to local models]", text)
+
+
+# --- SQL: which statements may run on a read-only connection ---
+# Comments, string literals and quoted identifiers are removed before the keyword checks.
+SQL_STRIP_RE = re.compile(r"--[^\n]*|/\*.*?\*/|'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|\[[^\]]*\]"
+                          r"|`[^`]*`", re.DOTALL)
+# Writes, batches and side-effecting functions that can follow SELECT/WITH. Over-blocking is
+# fine: a blocked read is routed to the write path, which needs a writable connection.
+SQL_WRITE_RE = re.compile(
+    r"\b(insert|update|delete|merge|upsert|drop|alter|create|truncate|grant|revoke|deny|exec"
+    r"|execute|call|into|backup|restore|dbcc|kill|shutdown|bulk|openrowset|opendatasource"
+    r"|openquery|waitfor|reconfigure|set|use|declare|copy|lock|vacuum|attach|detach|pragma"
+    r"|rename|sleep|benchmark|load_file|get_lock|nextval|setval|set_config|dblink\w*"
+    r"|pg_\w+|lo_\w+|xp_\w+|sp_\w+)\b", re.IGNORECASE)
+
+
+def is_read_only_sql(sql: str) -> bool:
+    """True only for a single SELECT or WITH query with no write keyword.
+
+    ponytail: keyword check, not a SQL parser. A user-defined function with side effects
+    still passes; reads also run in a transaction that is rolled back. For real protection
+    give read-only connections a database login that can only read (e.g. db_datareader).
+    """
+    s = SQL_STRIP_RE.sub(" ", sql).strip().rstrip(";").strip()
+    if not s or ";" in s:  # empty, or more than one statement
+        return False
+    return s.split(None, 1)[0].lower() in ("select", "with") and not SQL_WRITE_RE.search(s)
 
 
 class AuditLog:

@@ -51,8 +51,11 @@ def _status_error(code: int, detail: str) -> ProviderError:
 class OpenAICompatProvider:
     def __init__(self, base_url: str, model: str, *, api_key: str | None = None,
                  name: str = "ollama", is_local: bool = True, timeout: float = 300,
-                 client: httpx.AsyncClient | None = None, params: dict | None = None):
+                 client: httpx.AsyncClient | None = None, params: dict | None = None,
+                 outbound: Callable[[str], str] | None = None):
         self.base_url = base_url.rstrip("/")
+        # Applied to every text message before it is sent (redaction for hosted endpoints).
+        self.outbound = outbound
         self.model = model
         self.name = name
         self.is_local = is_local
@@ -79,6 +82,9 @@ class OpenAICompatProvider:
         return ids | {i.split("/", 1)[1] for i in ids if i.startswith("models/")}
 
     async def chat(self, messages, tools=None, on_token=None) -> Reply:
+        if self.outbound:
+            messages = [{**m, "content": self.outbound(m["content"])}
+                        if isinstance(m.get("content"), str) else m for m in messages]
         body = {**self.params, "model": self.model, "messages": messages, "stream": True,
                 "stream_options": {"include_usage": True}}
         if tools:

@@ -9,7 +9,7 @@ from pydantic import BaseModel, ValidationError
 from ferrule import safety
 from ferrule.config import Settings
 from ferrule.events import ApprovalRequest, Approver
-from ferrule.safety import AuditLog, SafetyError
+from ferrule.safety import AuditLog, SafetyError, mark_private
 
 
 class ToolResult(BaseModel):
@@ -94,17 +94,28 @@ async def run_tool(tool: Tool, args: BaseModel, ctx: ToolContext) -> ToolResult:
         result = ToolResult(ok=False, error=f"refused: {e}")
     except OSError as e:
         result = ToolResult(ok=False, error=f"{type(e).__name__}: {e}")
+    except Exception as e:  # noqa: BLE001 - one bad file or input must not end the whole run
+        # Seen in tests: UnicodeDecodeError (cp1252/UTF-16/.xlsx), csv.Error, MemoryError.
+        # The message can quote file contents, so it is private when data values are.
+        detail = str(e)
+        s = ctx.settings
+        if s.databases and not s.db_rows_to_hosted:
+            detail = mark_private(detail, "error details")
+        result = ToolResult(ok=False, error=f"{tool.name} failed: {type(e).__name__}: {detail}")
     limit = ctx.settings.max_output_chars
     if len(result.output) > limit:
         cut = len(result.output) - limit
         result.output = result.output[:limit] + f"\n... [truncated {cut} chars]"
+    if result.error and len(result.error) > limit:  # e.g. a 1,100-column mapping error
+        cut = len(result.error) - limit
+        result.error = result.error[:limit] + f"\n... [truncated {cut} chars]"
     ctx.audit.write("tool_result", tool=tool.name, ok=result.ok, error=result.error)
     return result
 
 
 def default_tools() -> dict[str, Tool]:
     from ferrule.tools.commands import RunCommand, RunTests
-    from ferrule.tools.files import EditFile, ReadFile, SearchRepo, WriteFile
+    from ferrule.tools.files import EditFile, ListFiles, ReadFile, SearchRepo, WriteFile
 
-    return {t.name: t for t in (ReadFile(), SearchRepo(), WriteFile(), EditFile(),
+    return {t.name: t for t in (ListFiles(), ReadFile(), SearchRepo(), WriteFile(), EditFile(),
                                 RunCommand(), RunTests())}

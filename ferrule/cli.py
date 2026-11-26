@@ -31,10 +31,39 @@ def print_event(e: Event) -> None:
         print(f"\n[{e.kind}] {d.get('message', '')}")
 
 
-async def _run(settings: Settings, task: str, plan: bool):
+# --- --json mode: one JSON object per line on stdout, answers on stdin (for the VS Code
+# extension). Out: {"type": "event"|"approval"|"result", ...}. In: {"id": n, "approved": bool}.
+
+def json_line(obj: dict) -> None:
+    print(json.dumps(obj), flush=True)  # ensure_ascii: safe on any console encoding
+
+
+def json_event(e: Event) -> None:
+    json_line({"type": "event", "kind": e.kind, "data": e.data})
+
+
+class JsonApprover:
+    def __init__(self, stdin=None):
+        self.stdin = stdin or sys.stdin
+        self.count = 0
+
+    async def approve(self, req) -> bool:
+        self.count += 1
+        json_line({"type": "approval", "id": self.count, "kind": req.kind,
+                   "summary": req.summary, "detail": req.detail})
+        line = await asyncio.to_thread(self.stdin.readline)
+        try:
+            answer = json.loads(line)
+        except json.JSONDecodeError:
+            return False  # closed stdin or garbage: reject
+        return answer.get("id") == self.count and answer.get("approved") is True
+
+
+async def _run(settings: Settings, task: str, plan: bool, as_json: bool = False):
     provider = await build_provider(settings, task)
+    approver, emit = (JsonApprover(), json_event) if as_json else (CliApprover(), print_event)
     try:
-        return await Agent(provider, settings, CliApprover(), print_event).run(task, plan=plan)
+        return await Agent(provider, settings, approver, emit).run(task, plan=plan)
     finally:
         await provider.aclose()
 
@@ -142,6 +171,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--local-only", action="store_true",
                        help="never send code to hosted providers")
         p.add_argument("--profile", choices=["fast", "balanced", "quality"])
+        p.add_argument("--json", action="store_true",
+                       help="JSON lines on stdout, approvals answered on stdin (VS Code)")
     p = sub.add_parser("doctor", help="show hardware, choose a local model, check providers")
     p.add_argument("--model", help="override the local model choice")
     p.add_argument("--no-speed-test", action="store_true")
@@ -169,6 +200,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         return asyncio.run(_doctor(settings, not args.no_speed_test, not args.no_pull))
 
-    result = asyncio.run(_run(settings, args.task, plan=args.command == "plan"))
-    print(f"\n[{result.status}] steps={result.steps} usage={result.usage}")
+    result = asyncio.run(_run(settings, args.task, plan=args.command == "plan",
+                              as_json=args.json))
+    if args.json:
+        json_line({"type": "result", "status": result.status, "answer": result.answer,
+                   "steps": result.steps, "usage": result.usage, "model": result.model})
+    else:
+        print(f"\n[{result.status}] steps={result.steps} usage={result.usage}")
     return 0 if result.status == "done" else 1

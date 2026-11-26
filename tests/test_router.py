@@ -10,9 +10,12 @@ from ferrule.router import (
     RoutedProvider,
     Router,
     classify,
+    duration,
     estimate_repo_tokens,
+    limit_note,
+    retry_after,
 )
-from ferrule.safety import Redactor
+from ferrule.safety import Redactor, mark_private
 
 # --- classifier (F13) ---
 
@@ -245,6 +248,8 @@ def test_notice_and_redaction_only_for_hosted():
     chat(rp, "token supersecret123")
     chat(rp, "again")
     assert fakes["big400"].calls[0][0]["content"] == "token [REDACTED]"
+    chat(rp, mark_private("ann | 30", "1 result rows"))
+    assert "ann" not in fakes["big400"].calls[2][0]["content"]  # database values stay local
     notices = [e.data["message"] for e in events if e.kind == "notice"]
     assert len(notices) == 1 and "leaves this machine" in notices[0]
 
@@ -398,3 +403,51 @@ def test_wait_budget_covers_the_whole_call():
     with pytest.raises(NoModelAvailable):
         chat(rp)
     assert sum(slept) <= 120
+
+
+# --- provider rate-limit messages: wait as long as they say, and say which limit ---
+
+GROQ_TPD = ('rate limited: {"error":{"message":"Rate limit reached for model `openai/gpt-oss-120b`'
+            ' in organization `org_x` service tier `on_demand` on tokens per day (TPD): Limit '
+            '200000, Used 199103, Requested 1632. Please try again in 5m17.52s. Need more '
+            'tokens?","type":"tokens","code":"rate_limit_exceeded"}}')
+
+
+@pytest.mark.parametrize("text,seconds", [
+    (GROQ_TPD, 317.52), ("Please try again in 20s", 20), ("try again in 1h2m3s", 3723),
+    ("try again in 340ms", 0.34), ("429 Too Many Requests", None),
+])
+def test_retry_after(text, seconds):
+    got = retry_after(text)
+    assert got == seconds if seconds is None else abs(got - seconds) < 1e-6
+
+
+def test_limit_note_and_duration():
+    assert limit_note(GROQ_TPD) == "daily token limit reached"
+    assert limit_note("Rate limit reached on requests per minute (RPM)") == \
+        "per-minute request limit reached"
+    assert limit_note("429") == "rate limit reached"
+    assert (duration(317.5), duration(45), duration(3723)) == ("5m18s", "45s", "1h02m")
+
+
+def test_daily_limit_stops_at_once_with_a_clear_message():
+    clock = Clock()
+    slept = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+        clock.t += seconds
+
+    router = Router(REG, KEYS, local_only=True, clock=clock, cooldown_s=60)
+    rp, _, _ = routed({"medium": Fake("medium", [RateLimited(GROQ_TPD)]),
+                       "small": Fake("small", [RateLimited("429")])},
+                      router=router, max_wait_s=120, sleep=fake_sleep)
+    with pytest.raises(NoModelAvailable) as e:
+        chat(rp)
+    msg = str(e.value)
+    assert msg.startswith("no usable model for debug. Blocked for now: ")
+    for name in ("medium", "small"):  # same provider, same block
+        expected = f"{name}: ollama daily token limit reached; cooling down, usable again in 5m18s"
+        assert expected in msg
+    assert msg.index("Other models:") > msg.index("5m18s")  # the actionable part comes first
+    assert not slept  # 5m18s is over max_wait_s: no pointless 60 s wait first
