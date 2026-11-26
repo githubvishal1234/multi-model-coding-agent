@@ -8,6 +8,8 @@ from typing import Literal, get_origin
 
 from pydantic import BaseModel, Field
 
+from ferrule.safety import DB_ENV_PREFIX
+
 # program -> allowed first argument (None = any). Every command still needs approval.
 DEFAULT_ALLOWLIST: dict[str, list[str] | None] = {
     "python": ["-m"],
@@ -63,6 +65,16 @@ class Settings(BaseModel):
     approval: Literal["ask", "auto_safe"] = "ask"
     allowlist: dict[str, list[str] | None] = Field(default_factory=lambda: dict(DEFAULT_ALLOWLIST))
     test_command: list[str] = Field(default_factory=lambda: ["python", "-m", "pytest", "-q"])
+    # name -> SQLAlchemy URL, from FERRULE_DB_<NAME>. Holds passwords: never printed or dumped.
+    databases: dict[str, str] = Field(default_factory=dict, repr=False, exclude=True)
+    db_writable: list[str] = Field(default_factory=list)  # connection names that allow writes
+    db_max_rows: int = Field(50, ge=1)  # result rows returned to the model per query
+    db_rows_to_hosted: bool = False  # True = row values may go to hosted models
+    # Data files whose contents are withheld from hosted models (like database rows) while
+    # databases are configured. Globs match the file name or its workspace-relative path.
+    private_files: list[str] = Field(default_factory=lambda: [
+        "*.csv", "*.tsv", "*.psv", "*.jsonl", "*.ndjson", "*.xlsx", "*.xls", "*.parquet",
+        "*.csv.gz", "*.dat"])
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None, **overrides) -> "Settings":
@@ -73,5 +85,10 @@ class Settings(BaseModel):
             if raw is not None:
                 is_json = get_origin(field.annotation) in (list, dict)
                 data[name] = json.loads(raw) if is_json else raw
+        fields = {f"FERRULE_{n.upper()}" for n in cls.model_fields}
+        dbs = {k[len(DB_ENV_PREFIX):].lower(): v for k, v in env.items()
+               if k.upper().startswith(DB_ENV_PREFIX) and k.upper() not in fields and v}
+        if dbs:
+            data["databases"] = {**data.get("databases", {}), **dbs}
         data.update({k: v for k, v in overrides.items() if v is not None})
         return cls(**data)

@@ -77,6 +77,18 @@ def test_search_regex_and_glob(settings, repo):
         "notes.md:2: Needle uppercase"
 
 
+def test_search_matches_file_names(settings, repo):
+    ctx, _ = make_ctx(settings)
+    assert call(ctx, "search_repo", pattern="a.py").output == "pkg/a.py: [file name matches]"
+
+
+def test_list_files_skips_secrets_git_and_honours_glob(settings, repo):
+    ctx, _ = make_ctx(settings)
+    assert call(ctx, "list_files").output.splitlines() == \
+        ["bin.dat", "notes.md", "pkg/a.py", "pkg/b.py"]
+    assert call(ctx, "list_files", glob="*.py").output == "pkg/a.py\npkg/b.py"
+
+
 def test_search_bad_regex_and_no_matches(settings, repo):
     ctx, _ = make_ctx(settings)
     assert not call(ctx, "search_repo", pattern="(", regex=True).ok

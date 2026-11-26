@@ -52,12 +52,37 @@ What R2 shows:
 
   These haven't been measured yet. When rechecked the same day, Gemini returned "503 high demand", so a rerun was postponed.
 
+## Router on Groq `openai/gpt-oss-120b` (2026-11-26)
+
+Same `eval/configs/router.yaml` (post-R2 fixes), with only `GROQ_API_KEY` set. Ollama wasn't running, so every model call went to Groq's free tier. `llama-3.3-70b-versatile` returned 404 `model_not_found` for this account and was removed from the registry.
+
+| Run | Passed | Result folder |
+|---|---|---|
+| G0 (smoke, 3 tasks) | 3/3 (add_lines_flag, docstring_area, fix_median) | `eval/results/20261126T040920Z_router` |
+| G1 (20 tasks) | 6/20 | `eval/results/20261126T043633Z_router` |
+
+What G1 shows:
+- **Only 12 of 20 tasks reached the model.** Groq returned 429 on tokens per minute 15 times and on **tokens per day** 8 times. After task 12 the daily cap was used up, so the last 8 tasks (all 3 `tests` tasks among them) failed with `provider_error` and 0 steps. That's a quota limit, not a model result.
+- **On the 12 tasks that ran, 6 passed:** answer_db_config, docstring_area, fix_from_traceback, fix_median, fix_pagination, fix_restock_big_module. That compares with the local 7B model's best of 6/20, but the samples are different, so treat it as a rough signal.
+- **Run-to-run variation still shows.** `add_lines_flag` passed in G0 and failed in G1.
+- Failures on the tasks that ran: 3 wrong edits on boilerplate tasks, `explain_order_sync` never wrote ANSWER.json, `extract_tax_rate` hit max_steps, and `fix_mutable_default` was still wrong.
+
+A full 20-task measurement on this free tier needs either two days (about 10 tasks per day's quota) or a run split with `--task`.
+
+Fixes made after G1, from its transcripts:
+- The task message now includes the workspace file list (up to 100 paths).
+- There's a new read-only `list_files` tool.
+- `search_repo` also matches file names.
+- An empty reply (no text, no tool call) is retried instead of ending the run.
+
+These haven't been measured yet. One rerun of `add_version_route` (`eval/results/20261126T050911Z_router`) shows the model calling `list_files` and reading `app.py` in its first two steps, where G1 spent its steps on refused `ls`/`git` commands. It then hit the daily token limit before finishing, so it doesn't count as a result. A second attempt at all 6 G1 failures (`eval/results/20261126T052633Z_router`) failed every task at step 0 on "tokens per day", even though `ferrule doctor`'s 5-token test request succeeded just before. Not a result either.
+
 ## Classifier
 
 The rule-based task classifier (`ferrule/router.py`) agrees with the hand-written class labels on 16 of the 20 eval tasks. That's measured by `tests/test_router.py::test_eval_task_labels_vs_classifier`. The long-context tasks are recognised by repository size, not by their instructions.
 
 ## Not measured yet
 
-- **Router with hosted fallback after the R2 fixes.** Waiting for free hosted capacity (see above).
+- **Router with hosted fallback after the R2 fixes, on all 20 tasks.** Run G1 above covered 12 tasks before Groq's daily token cap.
 - **Latency targets (N9).** To be set from these measurements once the hosted comparison exists.
 - **Web lookup on vs off.** That's Phase 6.

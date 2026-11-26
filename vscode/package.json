@@ -1,0 +1,41 @@
+{
+  "name": "ferrule",
+  "displayName": "Ferrule",
+  "description": "Run the Ferrule coding agent on the open folder and approve each change in VS Code.",
+  "version": "0.1.0",
+  "publisher": "ferrule-local",
+  "private": true,
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "main": "./extension.js",
+  "scripts": { "test": "node --test test/protocol.test.js" },
+  "contributes": {
+    "commands": [
+      { "command": "ferrule.run", "title": "Run Task", "category": "Ferrule" },
+      { "command": "ferrule.plan", "title": "Plan Task", "category": "Ferrule" },
+      { "command": "ferrule.stop", "title": "Stop", "category": "Ferrule" },
+      { "command": "ferrule.undo", "title": "Undo Last Run (files only)", "category": "Ferrule" },
+      { "command": "ferrule.doctor", "title": "Check Setup", "category": "Ferrule" }
+    ],
+    "configuration": {
+      "title": "Ferrule",
+      "properties": {
+        "ferrule.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Python interpreter that has Ferrule's dependencies, e.g. D:\\GenAI_projects\\Multi-Model Coding Agent\\.venv\\Scripts\\python.exe"
+        },
+        "ferrule.ferruleDir": {
+          "type": "string",
+          "default": "",
+          "description": "Folder that contains the ferrule package and its .env file. Ferrule runs from here with 'python -m ferrule'."
+        },
+        "ferrule.localOnly": {
+          "type": "boolean",
+          "default": false,
+          "description": "Never send code or prompts to hosted models (passes --local-only)."
+        }
+      }
+    }
+  }
+}
